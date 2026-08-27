@@ -40,7 +40,7 @@ function formatMoney(n: number) {
 const TREND_MONTHS = 6;
 
 export default function ReportPage() {
-  const { ready, categories, expenses } = useData();
+  const { ready, categories, expenses, getBudgetForMonth } = useData();
   const [monthCursor, setMonthCursor] = useState(() => monthKey(new Date().toISOString()));
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
@@ -69,6 +69,18 @@ export default function ReportPage() {
   }, [monthlyTotals, monthCursor, categoryById]);
 
   const monthTotal = pieData.reduce((sum, d) => sum + d.value, 0);
+
+  const budgetAmount = getBudgetForMonth(monthCursor);
+  const budgetSpent = useMemo(
+    () =>
+      pieData
+        .filter((d) => categoryById.get(d.categoryId)?.countsTowardBudget)
+        .reduce((sum, d) => sum + d.value, 0),
+    [pieData, categoryById]
+  );
+  const budgetRemaining = budgetAmount - budgetSpent;
+  const budgetOver = budgetAmount > 0 && budgetSpent > budgetAmount;
+  const budgetPct = budgetAmount > 0 ? Math.min(100, Math.round((budgetSpent / budgetAmount) * 100)) : 0;
 
   const prevMonthTotal = useMemo(() => {
     const prevKey = shiftMonth(monthCursor, -1);
@@ -148,6 +160,29 @@ export default function ReportPage() {
             ›
           </button>
         </div>
+
+        {budgetAmount > 0 && (
+          <div className="mb-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <div className="mb-2 flex items-baseline justify-between">
+              <h2 className="text-sm font-semibold text-neutral-500">Budget</h2>
+              <span className={`text-lg font-bold ${budgetOver ? "text-red-600" : ""}`}>
+                ${formatMoney(budgetRemaining)}
+                <span className="ml-1 text-xs font-normal text-neutral-400">
+                  {budgetOver ? "over" : "left"}
+                </span>
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
+              <div
+                className={`h-full rounded-full ${budgetOver ? "bg-red-500" : "bg-indigo-600"}`}
+                style={{ width: `${budgetPct}%` }}
+              />
+            </div>
+            <p className="mt-1 text-xs text-neutral-400">
+              ${formatMoney(budgetSpent)} spent of ${formatMoney(budgetAmount)} (budgeted categories only)
+            </p>
+          </div>
+        )}
 
         <div className="mb-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
           <div className="mb-2 flex items-baseline justify-between">

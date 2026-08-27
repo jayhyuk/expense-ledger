@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useData } from "@/lib/DataContext";
 import Header from "@/components/Header";
+import BudgetCard from "@/components/BudgetCard";
 
 function toDatetimeLocal(date: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -69,6 +70,7 @@ export default function HomePage() {
     <>
       <Header title="Add Expense" />
       <main className="flex-1 px-4 pt-4">
+        <BudgetCard />
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-xs font-medium text-neutral-500">Amount</label>

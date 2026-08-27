@@ -18,9 +18,11 @@ const COLOR_PALETTE = [
 ];
 
 export default function CategoriesPage() {
-  const { ready, categories, expenses, addCategory, removeCategory } = useData();
+  const { ready, categories, expenses, addCategory, removeCategory, updateCategoryBudgetFlag } =
+    useData();
   const [name, setName] = useState("");
   const [color, setColor] = useState(COLOR_PALETTE[0]);
+  const [countsTowardBudget, setCountsTowardBudget] = useState(true);
 
   const usageCount = useMemo(() => {
     const counts = new Map<string, number>();
@@ -33,9 +35,10 @@ export default function CategoriesPage() {
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    addCategory(name, color);
+    addCategory(name, color, countsTowardBudget);
     setName("");
     setColor(COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)]);
+    setCountsTowardBudget(true);
   };
 
   const handleRemove = (id: string, catName: string) => {
@@ -82,6 +85,15 @@ export default function CategoriesPage() {
               />
             ))}
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={countsTowardBudget}
+              onChange={(e) => setCountsTowardBudget(e.target.checked)}
+              className="h-4 w-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            Counts toward monthly budget
+          </label>
           <button
             type="submit"
             className="w-full rounded-lg bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
@@ -104,10 +116,21 @@ export default function CategoriesPage() {
               >
                 <div className="flex items-center gap-3">
                   <span className="h-3 w-3 rounded-full" style={{ backgroundColor: c.color }} />
-                  <span className="text-sm font-medium">{c.name}</span>
-                  <span className="text-xs text-neutral-400">
-                    {usageCount.get(c.id) ?? 0} expense(s)
-                  </span>
+                  <div>
+                    <span className="text-sm font-medium">{c.name}</span>
+                    <span className="ml-2 text-xs text-neutral-400">
+                      {usageCount.get(c.id) ?? 0} expense(s)
+                    </span>
+                    <label className="mt-0.5 flex items-center gap-1.5 text-xs text-neutral-500">
+                      <input
+                        type="checkbox"
+                        checked={c.countsTowardBudget}
+                        onChange={(e) => updateCategoryBudgetFlag(c.id, e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      Counts toward budget
+                    </label>
+                  </div>
                 </div>
                 <button
                   onClick={() => handleRemove(c.id, c.name)}

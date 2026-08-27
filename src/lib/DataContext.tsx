@@ -9,17 +9,23 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Category, Expense, ExportPayload } from "./types";
+import { Budgets, Category, Expense, ExportPayload } from "./types";
 import {
   applyImportPayload,
   buildExportPayload,
   DEFAULT_CATEGORIES,
   genId,
+  loadBudgets,
   loadCategories,
   loadExpenses,
+  saveBudgets,
   saveCategories,
   saveExpenses,
 } from "./storage";
+
+// Key used in the budgets map to store the fallback amount applied to any
+// month that doesn't have its own explicit budget set.
+export const DEFAULT_BUDGET_KEY = "default";
 
 type NewExpenseInput = {
   amount: number;
@@ -32,11 +38,16 @@ type DataContextValue = {
   ready: boolean;
   categories: Category[];
   expenses: Expense[];
+  budgets: Budgets;
   addExpense: (input: NewExpenseInput) => void;
   updateExpense: (id: string, input: NewExpenseInput) => void;
   deleteExpense: (id: string) => void;
-  addCategory: (name: string, color: string) => void;
+  addCategory: (name: string, color: string, countsTowardBudget: boolean) => void;
   removeCategory: (id: string) => void;
+  updateCategoryBudgetFlag: (id: string, countsTowardBudget: boolean) => void;
+  setMonthBudget: (month: string, amount: number) => void;
+  setDefaultBudget: (amount: number) => void;
+  getBudgetForMonth: (month: string) => number;
   exportJson: () => string;
   importJson: (json: string) => void;
 };
@@ -47,10 +58,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [budgets, setBudgets] = useState<Budgets>({});
 
   useEffect(() => {
     setCategories(loadCategories());
     setExpenses(loadExpenses());
+    setBudgets(loadBudgets());
     setReady(true);
   }, []);
 
@@ -61,6 +74,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (ready) saveExpenses(expenses);
   }, [expenses, ready]);
+
+  useEffect(() => {
+    if (ready) saveBudgets(budgets);
+  }, [budgets, ready]);
 
   const addExpense = useCallback((input: NewExpenseInput) => {
     const expense: Expense = {
@@ -88,18 +105,37 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setExpenses((prev) => prev.filter((e) => e.id !== id));
   }, []);
 
-  const addCategory = useCallback((name: string, color: string) => {
+  const addCategory = useCallback((name: string, color: string, countsTowardBudget: boolean) => {
     const trimmed = name.trim();
     if (!trimmed) return;
     setCategories((prev) => [
       ...prev,
-      { id: genId(), name: trimmed, color },
+      { id: genId(), name: trimmed, color, countsTowardBudget },
     ]);
   }, []);
 
   const removeCategory = useCallback((id: string) => {
     setCategories((prev) => prev.filter((c) => c.id !== id));
   }, []);
+
+  const updateCategoryBudgetFlag = useCallback((id: string, countsTowardBudget: boolean) => {
+    setCategories((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, countsTowardBudget } : c))
+    );
+  }, []);
+
+  const setMonthBudget = useCallback((month: string, amount: number) => {
+    setBudgets((prev) => ({ ...prev, [month]: amount }));
+  }, []);
+
+  const setDefaultBudget = useCallback((amount: number) => {
+    setBudgets((prev) => ({ ...prev, [DEFAULT_BUDGET_KEY]: amount }));
+  }, []);
+
+  const getBudgetForMonth = useCallback(
+    (month: string) => budgets[month] ?? budgets[DEFAULT_BUDGET_KEY] ?? 0,
+    [budgets]
+  );
 
   const exportJson = useCallback(() => {
     return JSON.stringify(buildExportPayload(), null, 2);
@@ -108,8 +144,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const importJson = useCallback((json: string) => {
     const payload = JSON.parse(json) as ExportPayload;
     applyImportPayload(payload);
-    setCategories(payload.categories);
-    setExpenses(payload.expenses);
+    setCategories(loadCategories());
+    setExpenses(loadExpenses());
+    setBudgets(loadBudgets());
   }, []);
 
   const value = useMemo(
@@ -117,15 +154,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ready,
       categories,
       expenses,
+      budgets,
       addExpense,
       updateExpense,
       deleteExpense,
       addCategory,
       removeCategory,
+      updateCategoryBudgetFlag,
+      setMonthBudget,
+      setDefaultBudget,
+      getBudgetForMonth,
       exportJson,
       importJson,
     }),
-    [ready, categories, expenses, addExpense, updateExpense, deleteExpense, addCategory, removeCategory, exportJson, importJson]
+    [
+      ready,
+      categories,
+      expenses,
+      budgets,
+      addExpense,
+      updateExpense,
+      deleteExpense,
+      addCategory,
+      removeCategory,
+      updateCategoryBudgetFlag,
+      setMonthBudget,
+      setDefaultBudget,
+      getBudgetForMonth,
+      exportJson,
+      importJson,
+    ]
   );
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
