@@ -4,16 +4,13 @@ import { useMemo, useState } from "react";
 import { useData } from "@/lib/DataContext";
 import Header from "@/components/Header";
 import BudgetCard from "@/components/BudgetCard";
+import { formatMoney } from "@/lib/dateUtils";
 
 function toDatetimeLocal(date: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
     date.getHours()
   )}:${pad(date.getMinutes())}`;
-}
-
-function formatMoney(n: number) {
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export default function HomePage() {
@@ -75,7 +72,7 @@ export default function HomePage() {
           <div>
             <label className="mb-1 block text-xs font-medium text-neutral-500">Amount</label>
             <div className="flex items-center rounded-xl border border-neutral-200 bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-900">
-              <span className="mr-1 text-xl text-neutral-400">$</span>
+              <span className="mr-1 text-xl text-neutral-400">฿</span>
               <input
                 type="number"
                 inputMode="decimal"
@@ -182,7 +179,7 @@ export default function HomePage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold">${formatMoney(exp.amount)}</span>
+                      <span className="text-sm font-semibold">฿{formatMoney(exp.amount)}</span>
                       <button
                         onClick={() => deleteExpense(exp.id)}
                         aria-label="Delete"

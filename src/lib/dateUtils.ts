@@ -16,7 +16,11 @@ export function shiftMonth(key: string, delta: number) {
 }
 
 export function formatMoney(n: number) {
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function formatCurrency(n: number) {
+  return `฿${formatMoney(n)}`;
 }
 
 /** Total spend for a given month, restricted to categories that count toward budget. */

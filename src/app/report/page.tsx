@@ -17,24 +17,11 @@ import {
 import { useData } from "@/lib/DataContext";
 import Header from "@/components/Header";
 import { Expense } from "@/lib/types";
-
-function monthKey(iso: string) {
-  return iso.slice(0, 7); // YYYY-MM
-}
+import { formatMoney, monthKey, shiftMonth } from "@/lib/dateUtils";
 
 function monthLabel(key: string) {
   const [y, m] = key.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "short", year: "2-digit" });
-}
-
-function shiftMonth(key: string, delta: number) {
-  const [y, m] = key.split("-").map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function formatMoney(n: number) {
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 const TREND_MONTHS = 6;
@@ -166,7 +153,7 @@ export default function ReportPage() {
             <div className="mb-2 flex items-baseline justify-between">
               <h2 className="text-sm font-semibold text-neutral-500">Budget</h2>
               <span className={`text-lg font-bold ${budgetOver ? "text-red-600" : ""}`}>
-                ${formatMoney(budgetRemaining)}
+                ฿{formatMoney(budgetRemaining)}
                 <span className="ml-1 text-xs font-normal text-neutral-400">
                   {budgetOver ? "over" : "left"}
                 </span>
@@ -179,7 +166,7 @@ export default function ReportPage() {
               />
             </div>
             <p className="mt-1 text-xs text-neutral-400">
-              ${formatMoney(budgetSpent)} spent of ${formatMoney(budgetAmount)} (budgeted categories only)
+              ฿{formatMoney(budgetSpent)} spent of ฿{formatMoney(budgetAmount)} (budgeted categories only)
             </p>
           </div>
         )}
@@ -187,7 +174,7 @@ export default function ReportPage() {
         <div className="mb-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
           <div className="mb-2 flex items-baseline justify-between">
             <h2 className="text-sm font-semibold text-neutral-500">Spending by category</h2>
-            <span className="text-lg font-bold">${formatMoney(monthTotal)}</span>
+            <span className="text-lg font-bold">฿{formatMoney(monthTotal)}</span>
           </div>
           {pieData.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-400">No expenses this month.</p>
@@ -207,7 +194,7 @@ export default function ReportPage() {
                       <Cell key={entry.categoryId} fill={entry.color} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v) => `$${formatMoney(Number(v))}`} />
+                  <Tooltip formatter={(v) => `฿${formatMoney(Number(v))}`} />
                 </PieChart>
               </ResponsiveContainer>
               <ul className="mt-2 space-y-1">
@@ -218,7 +205,7 @@ export default function ReportPage() {
                       {d.name}
                     </span>
                     <span className="text-neutral-500">
-                      ${formatMoney(d.value)} · {monthTotal > 0 ? Math.round((d.value / monthTotal) * 100) : 0}%
+                      ฿{formatMoney(d.value)} · {monthTotal > 0 ? Math.round((d.value / monthTotal) * 100) : 0}%
                     </span>
                   </li>
                 ))}
@@ -227,7 +214,7 @@ export default function ReportPage() {
           )}
           {prevMonthTotal > 0 && (
             <p className="mt-3 text-xs text-neutral-400">
-              Previous month total: ${formatMoney(prevMonthTotal)}
+              Previous month total: ฿{formatMoney(prevMonthTotal)}
             </p>
           )}
         </div>
@@ -244,7 +231,7 @@ export default function ReportPage() {
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} width={32} />
-                <Tooltip formatter={(v) => `$${formatMoney(Number(v))}`} />
+                <Tooltip formatter={(v) => `฿${formatMoney(Number(v))}`} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 {categories.map((c) => (
                   <Bar key={c.id} dataKey={c.name} stackId="a" fill={c.color} />
@@ -269,7 +256,7 @@ export default function ReportPage() {
                     {r.name}
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="text-neutral-500">${formatMoney(r.cur)}</span>
+                    <span className="text-neutral-500">฿{formatMoney(r.cur)}</span>
                     <span
                       className={`text-xs font-semibold ${
                         r.diff > 0

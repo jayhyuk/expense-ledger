@@ -93,13 +93,13 @@ export default function BudgetCard() {
       </div>
       <div className="mb-2 flex items-baseline justify-between">
         <span className={`text-xl font-bold ${over ? "text-red-600" : ""}`}>
-          ${formatMoney(remaining)}
+          ฿{formatMoney(remaining)}
           <span className="ml-1 text-xs font-normal text-neutral-400">
             {over ? "over budget" : "remaining"}
           </span>
         </span>
         <span className="text-xs text-neutral-400">
-          ${formatMoney(spent)} / ${formatMoney(budget)}
+          ฿{formatMoney(spent)} / ฿{formatMoney(budget)}
         </span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
