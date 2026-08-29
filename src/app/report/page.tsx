@@ -16,8 +16,9 @@ import {
 } from "recharts";
 import { useData } from "@/lib/DataContext";
 import Header from "@/components/Header";
-import { BudgetPeriod, Expense } from "@/lib/types";
+import { Budget, Expense, SalaryPeriod } from "@/lib/types";
 import {
+  budgetSpendForPeriod,
   formatDateRange,
   formatMoney,
   getCoveredCategories,
@@ -35,101 +36,108 @@ function monthLabel(key: string) {
 const TREND_PERIODS = 6;
 
 export default function ReportPage() {
-  const { ready, categories, expenses, budgets, getActiveBudget } = useData();
+  const {
+    ready,
+    categories,
+    expenses,
+    salaryPeriods,
+    getActiveSalaryPeriod,
+    getBudgetsForPeriod,
+  } = useData();
 
-  // Mode: "period" (Custom Budget Group) or "month" (Calendar Month)
+  // View Mode: "period" (Salary Period) or "month" (Calendar Month)
   const [viewMode, setViewMode] = useState<"period" | "month">(() =>
-    budgets.length > 0 ? "period" : "month"
+    salaryPeriods.length > 0 ? "period" : "month"
   );
 
-  // Selected budget group ID (if in "period" mode)
-  const [selectedBudgetId, setSelectedBudgetId] = useState<string>(() => {
-    const active = getActiveBudget();
-    return active?.id || budgets[0]?.id || "";
+  // Selected salary period ID
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>(() => {
+    const active = getActiveSalaryPeriod();
+    return active?.id || salaryPeriods[0]?.id || "";
   });
 
-  // Selected calendar month (if in "month" mode)
+  // Selected calendar month
   const [monthCursor, setMonthCursor] = useState(() => monthKey(new Date().toISOString()));
 
-  // Expandable categories set
+  // Expandable category items state
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+
+  // Optional filter by a specific budget within the salary period
+  const [selectedBudgetFilterId, setSelectedBudgetFilterId] = useState<string>("all");
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
-  // Current active budget group object if in period mode
-  const currentBudgetPeriod: BudgetPeriod | undefined = useMemo(() => {
-    if (viewMode === "period" && budgets.length > 0) {
-      return budgets.find((b) => b.id === selectedBudgetId) || budgets[0];
+  // Current active salary period object
+  const currentPeriod: SalaryPeriod | undefined = useMemo(() => {
+    if (viewMode === "period" && salaryPeriods.length > 0) {
+      return salaryPeriods.find((p) => p.id === selectedPeriodId) || salaryPeriods[0];
     }
     return undefined;
-  }, [viewMode, budgets, selectedBudgetId]);
+  }, [viewMode, salaryPeriods, selectedPeriodId]);
 
-  // Covered categories for the selected budget group
-  const coveredCategories = useMemo(() => {
-    if (viewMode === "period" && currentBudgetPeriod) {
-      return getCoveredCategories(currentBudgetPeriod, categories);
-    }
-    return categories;
-  }, [viewMode, currentBudgetPeriod, categories]);
+  // Budgets configured under the current salary period
+  const periodBudgets: Budget[] = useMemo(() => {
+    if (!currentPeriod) return [];
+    return getBudgetsForPeriod(currentPeriod.id);
+  }, [currentPeriod, getBudgetsForPeriod]);
 
-  const coveredCategoryIds = useMemo(
-    () => new Set(coveredCategories.map((c) => c.id)),
-    [coveredCategories]
-  );
+  // Active budget filter if one is selected
+  const activeBudgetFilter = useMemo(() => {
+    if (selectedBudgetFilterId === "all" || !currentPeriod) return null;
+    return periodBudgets.find((b) => b.id === selectedBudgetFilterId) || null;
+  }, [selectedBudgetFilterId, currentPeriod, periodBudgets]);
 
-  // Determine current active date range
-  const { startDate, endDate, periodLabel, budgetAmount } = useMemo(() => {
-    if (viewMode === "period" && currentBudgetPeriod) {
+  // Active date range & labels
+  const { startDate, endDate, periodLabel } = useMemo(() => {
+    if (viewMode === "period" && currentPeriod) {
       return {
-        startDate: currentBudgetPeriod.startDate,
-        endDate: currentBudgetPeriod.endDate,
-        periodLabel: currentBudgetPeriod.name,
-        budgetAmount: currentBudgetPeriod.amount,
+        startDate: currentPeriod.startDate,
+        endDate: currentPeriod.endDate,
+        periodLabel: currentPeriod.name,
       };
     }
-    // Calendar month mode
+    // Calendar month
     const [y, m] = monthCursor.split("-").map(Number);
     const lastDay = new Date(y, m, 0).getDate();
-    const start = `${monthCursor}-01`;
-    const end = `${monthCursor}-${String(lastDay).padStart(2, "0")}`;
-    const matchingBudget = budgets.find((b) => isDateInRange(start, b.startDate, b.endDate));
-
+    const s = `${monthCursor}-01`;
+    const e = `${monthCursor}-${String(lastDay).padStart(2, "0")}`;
     return {
-      startDate: start,
-      endDate: end,
+      startDate: s,
+      endDate: e,
       periodLabel: new Date(y, m - 1, 1).toLocaleDateString(undefined, {
         month: "long",
         year: "numeric",
       }),
-      budgetAmount: matchingBudget ? matchingBudget.amount : 0,
     };
-  }, [viewMode, currentBudgetPeriod, monthCursor, budgets]);
+  }, [viewMode, currentPeriod, monthCursor]);
 
-  // Expenses strictly in the current date range and covered categories
-  const periodExpenses = useMemo(() => {
-    return (expenses as Expense[]).filter(
-      (e) =>
-        isDateInRange(e.date, startDate, endDate) &&
-        (viewMode === "month" || coveredCategoryIds.has(e.categoryId))
-    );
-  }, [expenses, startDate, endDate, viewMode, coveredCategoryIds]);
+  // All expenses belonging to the salary period / month
+  const periodAllExpenses = useMemo(() => {
+    return (expenses as Expense[]).filter((e) => isDateInRange(e.date, startDate, endDate));
+  }, [expenses, startDate, endDate]);
 
-  // Expenses grouped by Category ID
+  // Filtered expenses (if a specific budget is selected as sub-filter)
+  const displayedExpenses = useMemo(() => {
+    if (!activeBudgetFilter) return periodAllExpenses;
+    const coveredIds = new Set(getCoveredCategories(activeBudgetFilter, categories).map((c) => c.id));
+    return periodAllExpenses.filter((e) => coveredIds.has(e.categoryId));
+  }, [activeBudgetFilter, periodAllExpenses, categories]);
+
+  // Expenses grouped by category
   const expensesByCategory = useMemo(() => {
     const map = new Map<string, Expense[]>();
-    for (const e of periodExpenses) {
+    for (const e of displayedExpenses) {
       const list = map.get(e.categoryId) || [];
       list.push(e);
       map.set(e.categoryId, list);
     }
-    // Sort each category's expenses newest first
     for (const list of map.values()) {
       list.sort((a, b) => b.date.localeCompare(a.date));
     }
     return map;
-  }, [periodExpenses]);
+  }, [displayedExpenses]);
 
-  // Pie chart data + category items
+  // Pie chart data
   const pieData = useMemo(() => {
     const data = [];
     for (const [categoryId, items] of expensesByCategory.entries()) {
@@ -148,32 +156,26 @@ export default function ReportPage() {
     return data.sort((a, b) => b.value - a.value);
   }, [expensesByCategory, categoryById]);
 
-  const monthTotal = useMemo(() => pieData.reduce((sum, d) => sum + d.value, 0), [pieData]);
+  const totalPeriodSpend = useMemo(() => {
+    return periodAllExpenses.reduce((sum, e) => sum + e.amount, 0);
+  }, [periodAllExpenses]);
 
-  const budgetSpent = useMemo(
-    () =>
-      viewMode === "period"
-        ? monthTotal
-        : pieData.filter((d) => d.countsTowardBudget).reduce((sum, d) => sum + d.value, 0),
-    [viewMode, monthTotal, pieData]
-  );
-  const budgetRemaining = budgetAmount - budgetSpent;
-  const budgetOver = budgetAmount > 0 && budgetSpent > budgetAmount;
-  const budgetPct =
-    budgetAmount > 0 ? Math.min(100, Math.round((budgetSpent / budgetAmount) * 100)) : 0;
+  const displayedTotal = useMemo(() => {
+    return displayedExpenses.reduce((sum, e) => sum + e.amount, 0);
+  }, [displayedExpenses]);
 
-  // Previous period calculation for comparison
+  // Previous period comparison
   const { prevTotal, prevCategoryTotals } = useMemo(() => {
     let pStart = "";
     let pEnd = "";
-    if (viewMode === "period" && currentBudgetPeriod) {
-      const idx = budgets.findIndex((b) => b.id === currentBudgetPeriod.id);
-      if (idx >= 0 && idx < budgets.length - 1) {
-        pStart = budgets[idx + 1].startDate;
-        pEnd = budgets[idx + 1].endDate;
+    if (viewMode === "period" && currentPeriod) {
+      const idx = salaryPeriods.findIndex((p) => p.id === currentPeriod.id);
+      if (idx >= 0 && idx < salaryPeriods.length - 1) {
+        pStart = salaryPeriods[idx + 1].startDate;
+        pEnd = salaryPeriods[idx + 1].endDate;
       } else {
-        const [sy, sm, sd] = currentBudgetPeriod.startDate.split("-").map(Number);
-        const [ey, em, ed] = currentBudgetPeriod.endDate.split("-").map(Number);
+        const [sy, sm, sd] = currentPeriod.startDate.split("-").map(Number);
+        const [ey, em, ed] = currentPeriod.endDate.split("-").map(Number);
         const prevStartObj = new Date(sy, sm - 2, sd);
         const prevEndObj = new Date(ey, em - 2, ed);
         pStart = toLocalDateString(prevStartObj);
@@ -187,11 +189,7 @@ export default function ReportPage() {
       pEnd = `${prevKey}-${String(lastDay).padStart(2, "0")}`;
     }
 
-    const prevExp = (expenses as Expense[]).filter(
-      (e) =>
-        isDateInRange(e.date, pStart, pEnd) &&
-        (viewMode === "month" || coveredCategoryIds.has(e.categoryId))
-    );
+    const prevExp = (expenses as Expense[]).filter((e) => isDateInRange(e.date, pStart, pEnd));
     const prevCatMap = new Map<string, number>();
     let total = 0;
     for (const e of prevExp) {
@@ -199,32 +197,28 @@ export default function ReportPage() {
       prevCatMap.set(e.categoryId, (prevCatMap.get(e.categoryId) ?? 0) + e.amount);
     }
     return { prevTotal: total, prevCategoryTotals: prevCatMap };
-  }, [viewMode, currentBudgetPeriod, budgets, monthCursor, expenses, coveredCategoryIds]);
+  }, [viewMode, currentPeriod, salaryPeriods, monthCursor, expenses]);
 
-  // Trend data across periods/months
+  // Trend data
   const trendData = useMemo(() => {
-    if (viewMode === "period" && budgets.length > 0) {
-      const slice = [...budgets].slice(0, TREND_PERIODS).reverse();
-      return slice.map((b) => {
-        const bCoveredIds = new Set(getCoveredCategories(b, categories).map((c) => c.id));
-        const bExp = (expenses as Expense[]).filter(
-          (e) => isDateInRange(e.date, b.startDate, b.endDate) && bCoveredIds.has(e.categoryId)
+    if (viewMode === "period" && salaryPeriods.length > 0) {
+      const slice = [...salaryPeriods].slice(0, TREND_PERIODS).reverse();
+      return slice.map((p) => {
+        const pExp = (expenses as Expense[]).filter((e) =>
+          isDateInRange(e.date, p.startDate, p.endDate)
         );
         const catMap = new Map<string, number>();
-        for (const e of bExp) catMap.set(e.categoryId, (catMap.get(e.categoryId) ?? 0) + e.amount);
+        for (const e of pExp) catMap.set(e.categoryId, (catMap.get(e.categoryId) ?? 0) + e.amount);
         const row: Record<string, string | number> = {
-          name: b.name.length > 12 ? b.name.slice(0, 12) + "…" : b.name,
+          name: p.name.length > 12 ? p.name.slice(0, 12) + "…" : p.name,
         };
         for (const c of categories) {
-          if (bCoveredIds.has(c.id)) {
-            row[c.name] = Math.round((catMap.get(c.id) ?? 0) * 100) / 100;
-          }
+          row[c.name] = Math.round((catMap.get(c.id) ?? 0) * 100) / 100;
         }
         return row;
       });
     }
 
-    // Monthly trend
     const keys: string[] = [];
     for (let i = TREND_PERIODS - 1; i >= 0; i--) keys.push(shiftMonth(monthCursor, -i));
     return keys.map((mk) => {
@@ -241,7 +235,7 @@ export default function ReportPage() {
       }
       return row;
     });
-  }, [viewMode, budgets, monthCursor, expenses, categories]);
+  }, [viewMode, salaryPeriods, monthCursor, expenses, categories]);
 
   // Category changes vs previous period
   const categoryChange = useMemo(() => {
@@ -267,7 +261,7 @@ export default function ReportPage() {
       .sort((a, b) => b.cur - a.cur);
   }, [pieData, prevCategoryTotals, categoryById]);
 
-  // Accordion toggle helpers
+  // Accordion helpers
   const toggleCategoryExpand = (catId: string) => {
     setExpandedCategories((prev) => {
       const next = new Set(prev);
@@ -285,13 +279,14 @@ export default function ReportPage() {
     setExpandedCategories(new Set());
   };
 
-  // Step through budget periods
+  // Step period navigation
   const handleStepPeriod = (direction: -1 | 1) => {
-    if (viewMode === "period" && budgets.length > 0) {
-      const curIdx = budgets.findIndex((b) => b.id === selectedBudgetId);
+    if (viewMode === "period" && salaryPeriods.length > 0) {
+      const curIdx = salaryPeriods.findIndex((p) => p.id === selectedPeriodId);
       const nextIdx = curIdx - direction;
-      if (nextIdx >= 0 && nextIdx < budgets.length) {
-        setSelectedBudgetId(budgets[nextIdx].id);
+      if (nextIdx >= 0 && nextIdx < salaryPeriods.length) {
+        setSelectedPeriodId(salaryPeriods[nextIdx].id);
+        setSelectedBudgetFilterId("all");
       }
     } else {
       setMonthCursor((m) => shiftMonth(m, direction));
@@ -300,12 +295,12 @@ export default function ReportPage() {
 
   const canStepNewer =
     viewMode === "period"
-      ? budgets.findIndex((b) => b.id === selectedBudgetId) > 0
+      ? salaryPeriods.findIndex((p) => p.id === selectedPeriodId) > 0
       : monthCursor < monthKey(new Date().toISOString());
 
   const canStepOlder =
     viewMode === "period"
-      ? budgets.findIndex((b) => b.id === selectedBudgetId) < budgets.length - 1
+      ? salaryPeriods.findIndex((p) => p.id === selectedPeriodId) < salaryPeriods.length - 1
       : true;
 
   if (!ready) {
@@ -319,12 +314,14 @@ export default function ReportPage() {
       <Header title="Report" />
       <main className="flex-1 px-4 pt-4 pb-10">
         {/* Mode Selector Tab */}
-        {budgets.length > 0 && (
+        {salaryPeriods.length > 0 && (
           <div className="mb-3 flex rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
             <button
               onClick={() => {
                 setViewMode("period");
-                if (!selectedBudgetId && budgets[0]) setSelectedBudgetId(budgets[0].id);
+                if (!selectedPeriodId && salaryPeriods[0]) {
+                  setSelectedPeriodId(salaryPeriods[0].id);
+                }
               }}
               className={`flex-1 rounded-lg py-1.5 text-xs font-semibold transition-all ${
                 viewMode === "period"
@@ -332,7 +329,7 @@ export default function ReportPage() {
                   : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
               }`}
             >
-              📅 Budget Groups
+              📅 Salary Periods
             </button>
             <button
               onClick={() => setViewMode("month")}
@@ -347,7 +344,7 @@ export default function ReportPage() {
           </div>
         )}
 
-        {/* Period Navigation Bar */}
+        {/* Salary Period Navigation Bar */}
         <div className="mb-4 rounded-2xl border border-neutral-200 bg-white p-3.5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <div className="flex items-center justify-between">
             <button
@@ -360,16 +357,19 @@ export default function ReportPage() {
             </button>
 
             <div className="text-center">
-              {viewMode === "period" && budgets.length > 1 ? (
+              {viewMode === "period" && salaryPeriods.length > 1 ? (
                 <div className="flex flex-col items-center">
                   <select
-                    value={selectedBudgetId}
-                    onChange={(e) => setSelectedBudgetId(e.target.value)}
+                    value={selectedPeriodId}
+                    onChange={(e) => {
+                      setSelectedPeriodId(e.target.value);
+                      setSelectedBudgetFilterId("all");
+                    }}
                     className="max-w-[220px] truncate rounded-lg bg-neutral-50 px-2 py-1 text-sm font-semibold text-neutral-800 dark:bg-neutral-800 dark:text-neutral-100"
                   >
-                    {budgets.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name}
+                    {salaryPeriods.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
                       </option>
                     ))}
                   </select>
@@ -398,70 +398,97 @@ export default function ReportPage() {
               ›
             </button>
           </div>
-
-          {/* Group covered category chips in report header */}
-          {viewMode === "period" && coveredCategories.length > 0 && (
-            <div className="mt-2.5 flex flex-wrap items-center justify-center gap-1 border-t border-neutral-100 pt-2 dark:border-neutral-800">
-              <span className="text-[10px] text-neutral-400">Includes:</span>
-              {coveredCategories.map((c) => (
-                <span
-                  key={c.id}
-                  className="flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-                >
-                  <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: c.color }} />
-                  {c.name}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
 
-        {/* Budget Summary Card */}
-        {budgetAmount > 0 && (
+        {/* Salary Period Budgets Summary */}
+        {viewMode === "period" && currentPeriod && periodBudgets.length > 0 && (
           <div className="mb-4 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-            <div className="mb-1.5 flex items-baseline justify-between">
+            <div className="mb-2.5 flex items-center justify-between">
               <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-                {viewMode === "period" ? "Group Budget" : "Monthly Budget"}
+                Budgets for this Period
               </h2>
-              <span className={`text-lg font-bold ${budgetOver ? "text-red-600" : ""}`}>
-                ฿{formatMoney(budgetRemaining)}
-                <span className="ml-1 text-xs font-normal text-neutral-400">
-                  {budgetOver ? "over" : "left"}
-                </span>
+              <span className="text-xs font-semibold text-neutral-800 dark:text-neutral-200">
+                ฿{formatMoney(totalPeriodSpend)} spent in total
               </span>
             </div>
-            <div className="h-2.5 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  budgetOver ? "bg-red-500" : budgetPct > 85 ? "bg-amber-500" : "bg-indigo-600"
-                }`}
-                style={{ width: `${budgetPct}%` }}
-              />
+
+            <div className="space-y-2.5">
+              {periodBudgets.map((b) => {
+                const bSpent = budgetSpendForPeriod(expenses, categories, b, currentPeriod);
+                const bOver = b.amount > 0 && bSpent > b.amount;
+                const bPct = b.amount > 0 ? Math.min(100, Math.round((bSpent / b.amount) * 100)) : 0;
+                const isFilterActive = selectedBudgetFilterId === b.id;
+
+                return (
+                  <div
+                    key={b.id}
+                    onClick={() =>
+                      setSelectedBudgetFilterId(isFilterActive ? "all" : b.id)
+                    }
+                    className={`cursor-pointer rounded-xl border p-2.5 transition-all ${
+                      isFilterActive
+                        ? "border-indigo-500 bg-indigo-50/40 ring-1 ring-indigo-500 dark:bg-indigo-950/30"
+                        : "border-neutral-100 bg-neutral-50/50 hover:border-neutral-200 dark:border-neutral-800 dark:bg-neutral-800/40"
+                    }`}
+                  >
+                    <div className="mb-1 flex items-center justify-between text-xs">
+                      <span className="font-semibold text-neutral-800 dark:text-neutral-200">
+                        {b.name}
+                        {isFilterActive && (
+                          <span className="ml-1.5 rounded bg-indigo-600 px-1.5 py-0.2 text-[10px] text-white">
+                            Filtered
+                          </span>
+                        )}
+                      </span>
+                      <span className={bOver ? "font-bold text-red-600" : "text-neutral-500"}>
+                        ฿{formatMoney(bSpent)} / ฿{formatMoney(b.amount)}
+                      </span>
+                    </div>
+
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700">
+                      <div
+                        className={`h-full rounded-full ${
+                          bOver ? "bg-red-500" : bPct > 85 ? "bg-amber-500" : "bg-indigo-600"
+                        }`}
+                        style={{ width: `${bPct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <p className="mt-1.5 text-xs text-neutral-400">
-              ฿{formatMoney(budgetSpent)} spent of ฿{formatMoney(budgetAmount)} (
-              {viewMode === "period" ? "group categories" : "budgeted categories"})
-            </p>
+            {selectedBudgetFilterId !== "all" && (
+              <button
+                onClick={() => setSelectedBudgetFilterId("all")}
+                className="mt-2.5 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+              >
+                ← Show All Expenses in Period
+              </button>
+            )}
           </div>
         )}
 
-        {/* Spending by Category with Expandable Item Breakdown */}
+        {/* Expenses in Period by Category & Items */}
         <div className="mb-4 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <div className="mb-3 flex items-baseline justify-between">
             <div>
               <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-                Spending by Category
+                {activeBudgetFilter
+                  ? `Expenses for "${activeBudgetFilter.name}"`
+                  : "All Expenses in Period"}
               </h2>
-              <p className="text-xs text-neutral-400">{periodExpenses.length} expense(s) total</p>
+              <p className="text-xs text-neutral-400">
+                {displayedExpenses.length} transaction(s)
+              </p>
             </div>
             <span className="text-xl font-bold text-neutral-900 dark:text-neutral-100">
-              ฿{formatMoney(monthTotal)}
+              ฿{formatMoney(displayedTotal)}
             </span>
           </div>
 
           {pieData.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-400">
-              No expenses recorded in this budget group / period.
+              No expenses recorded in this salary period.
             </p>
           ) : (
             <>
@@ -549,7 +576,7 @@ export default function ReportPage() {
                           <span className="text-right font-medium">
                             ฿{formatMoney(d.value)}
                             <span className="ml-1 text-xs text-neutral-400">
-                              · {monthTotal > 0 ? Math.round((d.value / monthTotal) * 100) : 0}%
+                              · {displayedTotal > 0 ? Math.round((d.value / displayedTotal) * 100) : 0}%
                             </span>
                           </span>
                           <span
@@ -613,7 +640,7 @@ export default function ReportPage() {
         {/* Category Trend Chart */}
         <div className="mb-4 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <h2 className="mb-2 text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-            Category Trend ({viewMode === "period" ? "Last Budget Groups" : "Last Months"})
+            Category Trend ({viewMode === "period" ? "Last Salary Periods" : "Last Months"})
           </h2>
           {categories.length === 0 ? (
             <p className="py-4 text-center text-sm text-neutral-400">No categories to chart.</p>

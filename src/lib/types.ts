@@ -14,22 +14,31 @@ export type Expense = {
   createdAt: string; // ISO datetime string, when the record was created
 };
 
-export type BudgetPeriod = {
+export type SalaryPeriod = {
   id: string;
-  name: string; // e.g. "Living Essentials", "Fun & Leisure"
-  amount: number;
+  name: string; // e.g. "Aug 25 – Sep 24" or "September Salary"
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
-  categoryIds?: string[]; // IDs of categories covered by this budget group. If omitted, covers all budgeted categories.
 };
 
-export type BudgetGroup = BudgetPeriod;
-export type Budgets = BudgetPeriod[];
+export type Budget = {
+  id: string;
+  periodId: string; // References SalaryPeriod.id
+  name: string; // e.g. "Food & Groceries", "Living Essentials", "Fun & Shopping", "Overall"
+  amount: number;
+  categoryIds?: string[]; // IDs of categories covered. If empty, covers all categories.
+};
+
+// Aliases for backward compatibility
+export type BudgetPeriod = SalaryPeriod;
+export type BudgetGroup = Budget;
+export type Budgets = Budget[];
 
 export type ExportPayload = {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   exportedAt: string;
   categories: Category[];
   expenses: Expense[];
-  budgets: BudgetPeriod[] | Record<string, number>;
+  salaryPeriods?: SalaryPeriod[];
+  budgets?: Budget[] | Record<string, number>;
 };

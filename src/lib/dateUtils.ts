@@ -1,4 +1,4 @@
-import { BudgetPeriod, Category, Expense } from "./types";
+import { Budget, Category, Expense, SalaryPeriod } from "./types";
 
 export function monthKey(iso: string) {
   return iso.slice(0, 7); // YYYY-MM
@@ -78,7 +78,6 @@ export function getDefaultSalaryCycle(payDay: number = 25, referenceDate: Date =
   let startYear = y;
   let startMonth = m;
   if (d < payDay) {
-    // We are before payDay in the current month, so cycle started previous month
     startMonth = m - 1;
     if (startMonth < 0) {
       startMonth = 11;
@@ -87,7 +86,6 @@ export function getDefaultSalaryCycle(payDay: number = 25, referenceDate: Date =
   }
 
   const startDateObj = new Date(startYear, startMonth, payDay);
-  // End date is day before payDay in the subsequent month
   const nextMonthObj = new Date(startYear, startMonth + 1, payDay);
   const endDateObj = new Date(nextMonthObj.getFullYear(), nextMonthObj.getMonth(), nextMonthObj.getDate() - 1);
 
@@ -98,14 +96,52 @@ export function getDefaultSalaryCycle(payDay: number = 25, referenceDate: Date =
   return { startDate, endDate, name };
 }
 
-/** Total spend for a specific budget group / period.
- * If budget.categoryIds is specified and non-empty, restricted to those categories.
- * Otherwise restricted to categories that count toward budget.
- */
+/** Total spend for a budget in a salary period. */
+export function budgetSpendForPeriod(
+  expenses: Expense[],
+  categories: Category[],
+  budget: Budget,
+  period: SalaryPeriod
+): number {
+  let targetIds: Set<string>;
+  if (budget.categoryIds && budget.categoryIds.length > 0) {
+    targetIds = new Set(budget.categoryIds);
+  } else {
+    targetIds = new Set(
+      categories.filter((c) => c.countsTowardBudget).map((c) => c.id)
+    );
+  }
+  return expenses
+    .filter((e) => isDateInRange(e.date, period.startDate, period.endDate) && targetIds.has(e.categoryId))
+    .reduce((sum, e) => sum + e.amount, 0);
+}
+
+/** Total spend for all expenses within a salary period. */
+export function totalSpendInSalaryPeriod(
+  expenses: Expense[],
+  period: SalaryPeriod
+): number {
+  return expenses
+    .filter((e) => isDateInRange(e.date, period.startDate, period.endDate))
+    .reduce((sum, e) => sum + e.amount, 0);
+}
+
+export function getCoveredCategories(
+  budget: { categoryIds?: string[] },
+  categories: Category[]
+): Category[] {
+  if (budget.categoryIds && budget.categoryIds.length > 0) {
+    const idSet = new Set(budget.categoryIds);
+    return categories.filter((c) => idSet.has(c.id));
+  }
+  return categories.filter((c) => c.countsTowardBudget);
+}
+
+// Backward compatibility helper
 export function budgetedSpendForBudgetGroup(
   expenses: Expense[],
   categories: Category[],
-  budget: BudgetPeriod
+  budget: { startDate: string; endDate: string; categoryIds?: string[] }
 ): number {
   let targetIds: Set<string>;
   if (budget.categoryIds && budget.categoryIds.length > 0) {
@@ -118,15 +154,4 @@ export function budgetedSpendForBudgetGroup(
   return expenses
     .filter((e) => isDateInRange(e.date, budget.startDate, budget.endDate) && targetIds.has(e.categoryId))
     .reduce((sum, e) => sum + e.amount, 0);
-}
-
-export function getCoveredCategories(
-  budget: BudgetPeriod,
-  categories: Category[]
-): Category[] {
-  if (budget.categoryIds && budget.categoryIds.length > 0) {
-    const idSet = new Set(budget.categoryIds);
-    return categories.filter((c) => idSet.has(c.id));
-  }
-  return categories.filter((c) => c.countsTowardBudget);
 }

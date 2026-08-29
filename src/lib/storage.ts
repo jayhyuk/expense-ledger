@@ -1,7 +1,8 @@
-import { BudgetPeriod, Budgets, Category, Expense, ExportPayload } from "./types";
+import { Budget, Category, Expense, ExportPayload, SalaryPeriod } from "./types";
 
 const CATEGORIES_KEY = "expense-ledger:categories";
 const EXPENSES_KEY = "expense-ledger:expenses";
+const SALARY_PERIODS_KEY = "expense-ledger:salary-periods";
 const BUDGETS_KEY = "expense-ledger:budgets";
 
 export const DEFAULT_CATEGORIES: Category[] = [
@@ -18,6 +19,13 @@ function isBrowser() {
   return typeof window !== "undefined";
 }
 
+export function genId(): string {
+  if (isBrowser() && "randomUUID" in window.crypto) {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function loadCategories(): Category[] {
   if (!isBrowser()) return DEFAULT_CATEGORIES;
   try {
@@ -25,7 +33,6 @@ export function loadCategories(): Category[] {
     if (!raw) return DEFAULT_CATEGORIES;
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      // Backfill countsTowardBudget for data saved before this field existed.
       return parsed.map((c) => ({
         countsTowardBudget: true,
         ...c,
@@ -59,46 +66,42 @@ export function saveExpenses(expenses: Expense[]) {
   window.localStorage.setItem(EXPENSES_KEY, JSON.stringify(expenses));
 }
 
-export function loadBudgets(): BudgetPeriod[] {
+export function loadSalaryPeriods(): SalaryPeriod[] {
   if (!isBrowser()) return [];
   try {
-    const raw = window.localStorage.getItem(BUDGETS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-
-    // New format: Array of BudgetPeriod
-    if (Array.isArray(parsed)) {
-      return parsed
-        .filter((b) => b && typeof b === "object" && b.startDate && b.endDate)
-        .map((b) => ({
-          id: b.id || genId(),
-          name: b.name || `${b.startDate} – ${b.endDate}`,
-          amount: typeof b.amount === "number" ? b.amount : parseFloat(b.amount) || 0,
-          startDate: b.startDate,
-          endDate: b.endDate,
-          categoryIds: Array.isArray(b.categoryIds) ? b.categoryIds : undefined,
-        }));
+    const rawPeriods = window.localStorage.getItem(SALARY_PERIODS_KEY);
+    if (rawPeriods) {
+      const parsed = JSON.parse(rawPeriods);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed
+          .filter((p) => p && typeof p === "object" && p.startDate && p.endDate)
+          .map((p) => ({
+            id: p.id || genId(),
+            name: p.name || `${p.startDate} – ${p.endDate}`,
+            startDate: p.startDate,
+            endDate: p.endDate,
+          }));
+      }
     }
 
-    // Legacy format: Record<string, number>
-    if (parsed && typeof parsed === "object") {
-      const periods: BudgetPeriod[] = [];
-      for (const [key, val] of Object.entries(parsed)) {
-        if (/^\d{4}-\d{2}$/.test(key) && typeof val === "number" && val > 0) {
-          const [y, m] = key.split("-").map(Number);
-          const lastDay = new Date(y, m, 0).getDate();
-          const startDate = `${key}-01`;
-          const endDate = `${key}-${String(lastDay).padStart(2, "0")}`;
-          periods.push({
-            id: genId(),
-            name: new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }),
-            amount: val,
-            startDate,
-            endDate,
-          });
+    // Auto-migration from legacy BUDGETS_KEY
+    const rawBudgets = window.localStorage.getItem(BUDGETS_KEY);
+    if (rawBudgets) {
+      const parsedBudgets = JSON.parse(rawBudgets);
+      if (Array.isArray(parsedBudgets)) {
+        const periods = periodsFromLegacyBudgets(parsedBudgets);
+        if (periods.length > 0) {
+          saveSalaryPeriods(periods);
+          return periods;
         }
       }
-      return periods;
+      if (parsedBudgets && typeof parsedBudgets === "object" && !Array.isArray(parsedBudgets)) {
+        const periods = periodsFromLegacyBudgetRecord(parsedBudgets);
+        if (periods.length > 0) {
+          saveSalaryPeriods(periods);
+          return periods;
+        }
+      }
     }
     return [];
   } catch {
@@ -106,18 +109,120 @@ export function loadBudgets(): BudgetPeriod[] {
   }
 }
 
-export function saveBudgets(budgets: BudgetPeriod[]) {
+type LegacyBudget = Partial<Budget> & { startDate?: string; endDate?: string };
+
+function periodsFromLegacyBudgets(items: unknown[]): SalaryPeriod[] {
+  const periodMap = new Map<string, SalaryPeriod>();
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const b = item as LegacyBudget;
+    if (!b?.startDate || !b?.endDate) continue;
+    const key = `${b.startDate}_${b.endDate}`;
+    if (!periodMap.has(key)) {
+      periodMap.set(key, { id: genId(), name: b.name || `${b.startDate} – ${b.endDate}`, startDate: b.startDate, endDate: b.endDate });
+    }
+  }
+  return Array.from(periodMap.values()).sort((a, b) => b.startDate.localeCompare(a.startDate));
+}
+
+function periodsFromLegacyBudgetRecord(record: Record<string, unknown>): SalaryPeriod[] {
+  return Object.keys(record).filter((key) => /^\d{4}-\d{2}$/.test(key) && Number(record[key]) > 0).sort((a, b) => b.localeCompare(a)).map((key) => {
+    const [year, month] = key.split("-").map(Number);
+    const lastDay = new Date(year, month, 0).getDate();
+    return { id: genId(), name: new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }), startDate: `${key}-01`, endDate: `${key}-${String(lastDay).padStart(2, "0")}` };
+  });
+}
+
+export function saveSalaryPeriods(periods: SalaryPeriod[]) {
+  if (!isBrowser()) return;
+  window.localStorage.setItem(SALARY_PERIODS_KEY, JSON.stringify(periods));
+}
+
+export function loadBudgets(existingPeriods?: SalaryPeriod[]): Budget[] {
+  if (!isBrowser()) return [];
+  try {
+    const periods = existingPeriods || loadSalaryPeriods();
+    const raw = window.localStorage.getItem(BUDGETS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+
+    if (Array.isArray(parsed)) {
+      const results: Budget[] = [];
+      for (const b of parsed) {
+        if (!b || typeof b !== "object") continue;
+        let periodId = b.periodId;
+
+        // If legacy item with direct startDate/endDate, find or link to period
+        if (!periodId && b.startDate && b.endDate) {
+          let matchingPeriod = periods.find(
+            (p) => p.startDate === b.startDate && p.endDate === b.endDate
+          );
+          if (matchingPeriod) {
+            periodId = matchingPeriod.id;
+          } else {
+            matchingPeriod = {
+              id: genId(),
+              name: b.name || `${b.startDate} – ${b.endDate}`,
+              startDate: b.startDate,
+              endDate: b.endDate,
+            };
+            periods.push(matchingPeriod);
+            periodId = matchingPeriod.id;
+            saveSalaryPeriods(periods);
+          }
+        }
+
+        if (periodId) {
+          results.push({
+            id: b.id || genId(),
+            periodId,
+            name: b.name || "Budget",
+            amount: typeof b.amount === "number" ? b.amount : parseFloat(b.amount) || 0,
+            categoryIds: Array.isArray(b.categoryIds) ? b.categoryIds : undefined,
+          });
+        }
+      }
+      return results;
+    }
+
+    // Legacy format: Record<string, number>
+    if (parsed && typeof parsed === "object") {
+      const budgets: Budget[] = [];
+      for (const [key, val] of Object.entries(parsed)) {
+        if (/^\d{4}-\d{2}$/.test(key) && Number(val) > 0) {
+          const matchingPeriod = periods.find((p) => p.startDate.startsWith(key));
+          if (matchingPeriod) {
+            budgets.push({
+              id: genId(),
+              periodId: matchingPeriod.id,
+              name: "Overall Budget",
+              amount: Number(val),
+            });
+          }
+        }
+      }
+      return budgets;
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveBudgets(budgets: Budget[]) {
   if (!isBrowser()) return;
   window.localStorage.setItem(BUDGETS_KEY, JSON.stringify(budgets));
 }
 
 export function buildExportPayload(): ExportPayload {
+  const periods = loadSalaryPeriods();
   return {
-    version: 3,
+    version: 4,
     exportedAt: new Date().toISOString(),
     categories: loadCategories(),
     expenses: loadExpenses(),
-    budgets: loadBudgets(),
+    salaryPeriods: periods,
+    budgets: loadBudgets(periods),
   };
 }
 
@@ -130,40 +235,54 @@ export function applyImportPayload(payload: ExportPayload) {
     countsTowardBudget: c.countsTowardBudget ?? true,
   }));
 
-  let budgets: BudgetPeriod[] = [];
-  if (Array.isArray(payload.budgets)) {
-    budgets = payload.budgets.map((b) => ({
-      id: b.id || genId(),
-      name: b.name || `${b.startDate} – ${b.endDate}`,
-      amount: typeof b.amount === "number" ? b.amount : parseFloat(String(b.amount)) || 0,
-      startDate: b.startDate,
-      endDate: b.endDate,
-      categoryIds: Array.isArray(b.categoryIds) ? b.categoryIds : undefined,
+  let salaryPeriods: SalaryPeriod[] = [];
+  const budgets: Budget[] = [];
+
+  if (Array.isArray(payload.salaryPeriods)) {
+    salaryPeriods = payload.salaryPeriods.map((p) => ({
+      id: p.id || genId(),
+      name: p.name || `${p.startDate} – ${p.endDate}`,
+      startDate: p.startDate,
+      endDate: p.endDate,
     }));
-  } else if (payload.budgets && typeof payload.budgets === "object") {
-    for (const [key, val] of Object.entries(payload.budgets)) {
-      if (/^\d{4}-\d{2}$/.test(key) && typeof val === "number" && val > 0) {
-        const [y, m] = key.split("-").map(Number);
-        const lastDay = new Date(y, m, 0).getDate();
+  }
+
+  if (Array.isArray(payload.budgets)) {
+    // If salaryPeriods was empty in payload, extract from legacy budgets
+    if (salaryPeriods.length === 0) {
+      salaryPeriods = periodsFromLegacyBudgets(payload.budgets as unknown[]);
+    }
+
+    for (const item of payload.budgets as unknown[]) {
+      if (!item || typeof item !== "object") continue;
+      const b = item as LegacyBudget;
+      let periodId = b.periodId;
+      if (!periodId && b.startDate && b.endDate) {
+        const match = salaryPeriods.find((p) => p.startDate === b.startDate && p.endDate === b.endDate);
+        if (match) periodId = match.id;
+      }
+      if (periodId || salaryPeriods[0]) {
         budgets.push({
-          id: genId(),
-          name: new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }),
-          amount: val,
-          startDate: `${key}-01`,
-          endDate: `${key}-${String(lastDay).padStart(2, "0")}`,
+          id: b.id || genId(),
+          periodId: periodId || salaryPeriods[0].id,
+          name: b.name || "Budget",
+          amount: typeof b.amount === "number" ? b.amount : parseFloat(String(b.amount)) || 0,
+          categoryIds: Array.isArray(b.categoryIds) ? b.categoryIds : undefined,
         });
+      }
+    }
+  } else if (payload.budgets && typeof payload.budgets === "object") {
+    salaryPeriods = salaryPeriods.length > 0 ? salaryPeriods : periodsFromLegacyBudgetRecord(payload.budgets);
+    for (const [key, val] of Object.entries(payload.budgets)) {
+      const period = salaryPeriods.find((p) => p.startDate.startsWith(key));
+      if (/^\d{4}-\d{2}$/.test(key) && period && Number(val) > 0) {
+        budgets.push({ id: genId(), periodId: period.id, name: "Overall Budget", amount: Number(val) });
       }
     }
   }
 
   saveCategories(categories);
   saveExpenses(payload.expenses);
+  saveSalaryPeriods(salaryPeriods);
   saveBudgets(budgets);
-}
-
-export function genId(): string {
-  if (isBrowser() && "randomUUID" in window.crypto) {
-    return window.crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }

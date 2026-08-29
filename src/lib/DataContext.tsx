@@ -9,7 +9,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { BudgetPeriod, Budgets, Category, Expense, ExportPayload } from "./types";
+import { Budget, Category, Expense, ExportPayload, SalaryPeriod } from "./types";
 import {
   applyImportPayload,
   buildExportPayload,
@@ -18,9 +18,11 @@ import {
   loadBudgets,
   loadCategories,
   loadExpenses,
+  loadSalaryPeriods,
   saveBudgets,
   saveCategories,
   saveExpenses,
+  saveSalaryPeriods,
 } from "./storage";
 import { isDateInRange, toLocalDateString } from "./dateUtils";
 
@@ -31,11 +33,16 @@ type NewExpenseInput = {
   date: string;
 };
 
-type NewBudgetInput = {
+type NewSalaryPeriodInput = {
   name?: string;
-  amount: number;
   startDate: string;
   endDate: string;
+};
+
+type NewBudgetInput = {
+  periodId: string;
+  name: string;
+  amount: number;
   categoryIds?: string[];
 };
 
@@ -43,10 +50,15 @@ type DataContextValue = {
   ready: boolean;
   categories: Category[];
   expenses: Expense[];
-  budgets: BudgetPeriod[];
+  salaryPeriods: SalaryPeriod[];
+  budgets: Budget[];
+
+  // Expense CRUD
   addExpense: (input: NewExpenseInput) => void;
   updateExpense: (id: string, input: NewExpenseInput) => void;
   deleteExpense: (id: string) => void;
+
+  // Category CRUD
   addCategory: (name: string, color: string, countsTowardBudget: boolean) => void;
   updateCategory: (
     id: string,
@@ -54,12 +66,19 @@ type DataContextValue = {
   ) => void;
   removeCategory: (id: string) => void;
   updateCategoryBudgetFlag: (id: string, countsTowardBudget: boolean) => void;
-  addBudgetPeriod: (input: NewBudgetInput) => BudgetPeriod;
-  updateBudgetPeriod: (id: string, input: NewBudgetInput) => void;
-  deleteBudgetPeriod: (id: string) => void;
-  getActiveBudget: (dateIsoOrStr?: string) => BudgetPeriod | undefined;
-  getBudgetForMonth: (month: string) => number;
-  setMonthBudget: (month: string, amount: number) => void;
+
+  // SalaryPeriod CRUD
+  addSalaryPeriod: (input: NewSalaryPeriodInput) => SalaryPeriod;
+  updateSalaryPeriod: (id: string, input: NewSalaryPeriodInput) => void;
+  deleteSalaryPeriod: (id: string) => void;
+  getActiveSalaryPeriod: (dateIsoOrStr?: string) => SalaryPeriod | undefined;
+
+  // Budget CRUD
+  addBudget: (input: NewBudgetInput) => Budget;
+  updateBudget: (id: string, input: Partial<NewBudgetInput>) => void;
+  deleteBudget: (id: string) => void;
+  getBudgetsForPeriod: (periodId: string) => Budget[];
+
   exportJson: () => string;
   importJson: (json: string) => void;
 };
@@ -70,12 +89,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [budgets, setBudgets] = useState<BudgetPeriod[]>([]);
+  const [salaryPeriods, setSalaryPeriods] = useState<SalaryPeriod[]>([]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
 
   useEffect(() => {
-    setCategories(loadCategories());
-    setExpenses(loadExpenses());
-    setBudgets(loadBudgets());
+    const loadedCategories = loadCategories();
+    const loadedExpenses = loadExpenses();
+    const loadedPeriods = loadSalaryPeriods();
+    const loadedBudgets = loadBudgets(loadedPeriods);
+
+    // Loading localStorage is the provider's external-store initialization.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCategories(loadedCategories);
+    setExpenses(loadedExpenses);
+    setSalaryPeriods(loadedPeriods);
+    setBudgets(loadedBudgets);
     setReady(true);
   }, []);
 
@@ -86,6 +114,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (ready) saveExpenses(expenses);
   }, [expenses, ready]);
+
+  useEffect(() => {
+    if (ready) saveSalaryPeriods(salaryPeriods);
+  }, [salaryPeriods, ready]);
 
   useEffect(() => {
     if (ready) saveBudgets(budgets);
@@ -166,17 +198,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
-  const addBudgetPeriod = useCallback((input: NewBudgetInput): BudgetPeriod => {
-    const newPeriod: BudgetPeriod = {
+  // SalaryPeriod CRUD
+  const addSalaryPeriod = useCallback((input: NewSalaryPeriodInput): SalaryPeriod => {
+    const newPeriod: SalaryPeriod = {
       id: genId(),
       name: input.name?.trim() || `${input.startDate} – ${input.endDate}`,
-      amount: input.amount,
       startDate: input.startDate,
       endDate: input.endDate,
-      categoryIds: input.categoryIds,
     };
-    setBudgets((prev) => {
-      // Keep sorted by startDate descending
+    setSalaryPeriods((prev) => {
       const next = [newPeriod, ...prev];
       next.sort((a, b) => b.startDate.localeCompare(a.startDate));
       return next;
@@ -184,81 +214,80 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return newPeriod;
   }, []);
 
-  const updateBudgetPeriod = useCallback((id: string, input: NewBudgetInput) => {
-    setBudgets((prev) => {
-      const next = prev.map((b) =>
-        b.id === id
+  const updateSalaryPeriod = useCallback((id: string, input: NewSalaryPeriodInput) => {
+    setSalaryPeriods((prev) => {
+      const next = prev.map((p) =>
+        p.id === id
           ? {
-              ...b,
+              ...p,
               name: input.name?.trim() || `${input.startDate} – ${input.endDate}`,
-              amount: input.amount,
               startDate: input.startDate,
               endDate: input.endDate,
-              categoryIds: input.categoryIds,
             }
-          : b
+          : p
       );
       next.sort((a, b) => b.startDate.localeCompare(a.startDate));
       return next;
     });
   }, []);
 
-  const deleteBudgetPeriod = useCallback((id: string) => {
+  const deleteSalaryPeriod = useCallback((id: string) => {
+    setSalaryPeriods((prev) => prev.filter((p) => p.id !== id));
+    // Also remove budgets under this period
+    setBudgets((prev) => prev.filter((b) => b.periodId !== id));
+  }, []);
+
+  const getActiveSalaryPeriod = useCallback(
+    (dateIsoOrStr?: string): SalaryPeriod | undefined => {
+      if (salaryPeriods.length === 0) return undefined;
+      const targetDate = dateIsoOrStr || toLocalDateString(new Date());
+      const enclosing = salaryPeriods.find((p) => isDateInRange(targetDate, p.startDate, p.endDate));
+      if (enclosing) return enclosing;
+      return salaryPeriods[0];
+    },
+    [salaryPeriods]
+  );
+
+  // Budget CRUD
+  const addBudget = useCallback((input: NewBudgetInput): Budget => {
+    const newBudget: Budget = {
+      id: genId(),
+      periodId: input.periodId,
+      name: input.name.trim() || "Budget",
+      amount: input.amount,
+      categoryIds: input.categoryIds,
+    };
+    setBudgets((prev) => [...prev, newBudget]);
+    return newBudget;
+  }, []);
+
+  const updateBudget = useCallback((id: string, input: Partial<NewBudgetInput>) => {
+    setBudgets((prev) =>
+      prev.map((b) => {
+        if (b.id !== id) return b;
+        return {
+          ...b,
+          ...(input.periodId ? { periodId: input.periodId } : {}),
+          ...(input.name ? { name: input.name.trim() } : {}),
+          ...(input.amount !== undefined ? { amount: input.amount } : {}),
+          ...(input.categoryIds !== undefined ? { categoryIds: input.categoryIds } : {}),
+        };
+      })
+    );
+  }, []);
+
+  const deleteBudget = useCallback((id: string) => {
     setBudgets((prev) => prev.filter((b) => b.id !== id));
   }, []);
 
-  const getActiveBudget = useCallback(
-    (dateIsoOrStr?: string): BudgetPeriod | undefined => {
-      if (budgets.length === 0) return undefined;
-      const targetDate = dateIsoOrStr || toLocalDateString(new Date());
-      // First try to find one that encloses targetDate
-      const enclosing = budgets.find((b) => isDateInRange(targetDate, b.startDate, b.endDate));
-      if (enclosing) return enclosing;
-      // Otherwise return the most recent budget
-      return budgets[0];
+  const getBudgetsForPeriod = useCallback(
+    (periodId: string): Budget[] => {
+      return budgets.filter((b) => b.periodId === periodId);
     },
     [budgets]
   );
 
-  const getBudgetForMonth = useCallback(
-    (month: string) => {
-      const matching = budgets.find((b) => b.startDate.startsWith(month));
-      if (matching) return matching.amount;
-      const active = getActiveBudget();
-      return active ? active.amount : 0;
-    },
-    [budgets, getActiveBudget]
-  );
-
-  const setMonthBudget = useCallback(
-    (month: string, amount: number) => {
-      const existing = budgets.find((b) => b.startDate.startsWith(month));
-      const [y, m] = month.split("-").map(Number);
-      const lastDay = new Date(y, m, 0).getDate();
-      const startDate = `${month}-01`;
-      const endDate = `${month}-${String(lastDay).padStart(2, "0")}`;
-      if (existing) {
-        updateBudgetPeriod(existing.id, {
-          name: existing.name,
-          amount,
-          startDate: existing.startDate,
-          endDate: existing.endDate,
-        });
-      } else {
-        addBudgetPeriod({
-          name: new Date(y, m - 1, 1).toLocaleDateString(undefined, {
-            month: "long",
-            year: "numeric",
-          }),
-          amount,
-          startDate,
-          endDate,
-        });
-      }
-    },
-    [budgets, updateBudgetPeriod, addBudgetPeriod]
-  );
-
+  // Legacy helper mappings
   const exportJson = useCallback(() => {
     return JSON.stringify(buildExportPayload(), null, 2);
   }, []);
@@ -266,9 +295,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const importJson = useCallback((json: string) => {
     const payload = JSON.parse(json) as ExportPayload;
     applyImportPayload(payload);
-    setCategories(loadCategories());
-    setExpenses(loadExpenses());
-    setBudgets(loadBudgets());
+    const loadedCategories = loadCategories();
+    const loadedExpenses = loadExpenses();
+    const loadedPeriods = loadSalaryPeriods();
+    const loadedBudgets = loadBudgets(loadedPeriods);
+    setCategories(loadedCategories);
+    setExpenses(loadedExpenses);
+    setSalaryPeriods(loadedPeriods);
+    setBudgets(loadedBudgets);
   }, []);
 
   const value = useMemo(
@@ -276,6 +310,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ready,
       categories,
       expenses,
+      salaryPeriods,
       budgets,
       addExpense,
       updateExpense,
@@ -284,12 +319,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
       updateCategory,
       removeCategory,
       updateCategoryBudgetFlag,
-      addBudgetPeriod,
-      updateBudgetPeriod,
-      deleteBudgetPeriod,
-      getActiveBudget,
-      getBudgetForMonth,
-      setMonthBudget,
+      addSalaryPeriod,
+      updateSalaryPeriod,
+      deleteSalaryPeriod,
+      getActiveSalaryPeriod,
+      addBudget,
+      updateBudget,
+      deleteBudget,
+      getBudgetsForPeriod,
       exportJson,
       importJson,
     }),
@@ -297,6 +334,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ready,
       categories,
       expenses,
+      salaryPeriods,
       budgets,
       addExpense,
       updateExpense,
@@ -305,12 +343,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
       updateCategory,
       removeCategory,
       updateCategoryBudgetFlag,
-      addBudgetPeriod,
-      updateBudgetPeriod,
-      deleteBudgetPeriod,
-      getActiveBudget,
-      getBudgetForMonth,
-      setMonthBudget,
+      addSalaryPeriod,
+      updateSalaryPeriod,
+      deleteSalaryPeriod,
+      getActiveSalaryPeriod,
+      addBudget,
+      updateBudget,
+      deleteBudget,
+      getBudgetsForPeriod,
       exportJson,
       importJson,
     ]
