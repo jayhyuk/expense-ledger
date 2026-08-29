@@ -1,4 +1,4 @@
-import { Category, Expense } from "./types";
+import { BudgetPeriod, Category, Expense } from "./types";
 
 export function monthKey(iso: string) {
   return iso.slice(0, 7); // YYYY-MM
@@ -98,31 +98,35 @@ export function getDefaultSalaryCycle(payDay: number = 25, referenceDate: Date =
   return { startDate, endDate, name };
 }
 
-/** Total spend for a given budget period, restricted to categories that count toward budget. */
-export function budgetedSpendForPeriod(
+/** Total spend for a specific budget group / period.
+ * If budget.categoryIds is specified and non-empty, restricted to those categories.
+ * Otherwise restricted to categories that count toward budget.
+ */
+export function budgetedSpendForBudgetGroup(
   expenses: Expense[],
   categories: Category[],
-  startDateStr: string,
-  endDateStr: string
+  budget: BudgetPeriod
 ): number {
-  const budgetedIds = new Set(
-    categories.filter((c) => c.countsTowardBudget).map((c) => c.id)
-  );
+  let targetIds: Set<string>;
+  if (budget.categoryIds && budget.categoryIds.length > 0) {
+    targetIds = new Set(budget.categoryIds);
+  } else {
+    targetIds = new Set(
+      categories.filter((c) => c.countsTowardBudget).map((c) => c.id)
+    );
+  }
   return expenses
-    .filter((e) => isDateInRange(e.date, startDateStr, endDateStr) && budgetedIds.has(e.categoryId))
+    .filter((e) => isDateInRange(e.date, budget.startDate, budget.endDate) && targetIds.has(e.categoryId))
     .reduce((sum, e) => sum + e.amount, 0);
 }
 
-/** Total spend for a given month, restricted to categories that count toward budget. */
-export function budgetedSpendForMonth(
-  expenses: Expense[],
-  categories: Category[],
-  month: string
-): number {
-  const budgetedIds = new Set(
-    categories.filter((c) => c.countsTowardBudget).map((c) => c.id)
-  );
-  return expenses
-    .filter((e) => monthKey(e.date) === month && budgetedIds.has(e.categoryId))
-    .reduce((sum, e) => sum + e.amount, 0);
+export function getCoveredCategories(
+  budget: BudgetPeriod,
+  categories: Category[]
+): Category[] {
+  if (budget.categoryIds && budget.categoryIds.length > 0) {
+    const idSet = new Set(budget.categoryIds);
+    return categories.filter((c) => idSet.has(c.id));
+  }
+  return categories.filter((c) => c.countsTowardBudget);
 }

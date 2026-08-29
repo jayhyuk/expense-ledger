@@ -16,12 +16,14 @@ export type Expense = {
 
 export type BudgetPeriod = {
   id: string;
-  name: string; // e.g. "Aug 25 - Sep 24" or "September Salary"
+  name: string; // e.g. "Living Essentials", "Fun & Leisure"
   amount: number;
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
+  categoryIds?: string[]; // IDs of categories covered by this budget group. If omitted, covers all budgeted categories.
 };
 
+export type BudgetGroup = BudgetPeriod;
 export type Budgets = BudgetPeriod[];
 
 export type ExportPayload = {

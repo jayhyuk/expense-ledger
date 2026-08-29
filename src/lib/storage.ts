@@ -1,4 +1,4 @@
-import { Budgets, Category, Expense, ExportPayload } from "./types";
+import { BudgetPeriod, Budgets, Category, Expense, ExportPayload } from "./types";
 
 const CATEGORIES_KEY = "expense-ledger:categories";
 const EXPENSES_KEY = "expense-ledger:expenses";
@@ -76,6 +76,7 @@ export function loadBudgets(): BudgetPeriod[] {
           amount: typeof b.amount === "number" ? b.amount : parseFloat(b.amount) || 0,
           startDate: b.startDate,
           endDate: b.endDate,
+          categoryIds: Array.isArray(b.categoryIds) ? b.categoryIds : undefined,
         }));
     }
 
@@ -137,6 +138,7 @@ export function applyImportPayload(payload: ExportPayload) {
       amount: typeof b.amount === "number" ? b.amount : parseFloat(String(b.amount)) || 0,
       startDate: b.startDate,
       endDate: b.endDate,
+      categoryIds: Array.isArray(b.categoryIds) ? b.categoryIds : undefined,
     }));
   } else if (payload.budgets && typeof payload.budgets === "object") {
     for (const [key, val] of Object.entries(payload.budgets)) {

@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import { useData } from "@/lib/DataContext";
 import {
-  budgetedSpendForPeriod,
+  budgetedSpendForBudgetGroup,
   formatDateRange,
   formatMoney,
+  getCoveredCategories,
   getDefaultSalaryCycle,
   getDaysRemaining,
   toLocalDateString,
@@ -40,19 +41,19 @@ export default function BudgetCard() {
   const [draftStartDate, setDraftStartDate] = useState("");
   const [draftEndDate, setDraftEndDate] = useState("");
   const [draftName, setDraftName] = useState("");
+  const [draftCategoryIds, setDraftCategoryIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
 
   const spent = useMemo(() => {
     if (!activeBudget) return 0;
-    return budgetedSpendForPeriod(
-      expenses,
-      categories,
-      activeBudget.startDate,
-      activeBudget.endDate
-    );
+    return budgetedSpendForBudgetGroup(expenses, categories, activeBudget);
   }, [expenses, categories, activeBudget]);
 
-  const hasBudgetedCategories = categories.some((c) => c.countsTowardBudget);
+  const coveredCats = useMemo(() => {
+    if (!activeBudget) return [];
+    return getCoveredCategories(activeBudget, categories);
+  }, [activeBudget, categories]);
+
   const budget = activeBudget?.amount ?? 0;
   const remaining = budget - spent;
   const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
@@ -65,13 +66,18 @@ export default function BudgetCard() {
       setDraftStartDate(targetBudget.startDate);
       setDraftEndDate(targetBudget.endDate);
       setDraftName(targetBudget.name || "");
+      setDraftCategoryIds(
+        targetBudget.categoryIds && targetBudget.categoryIds.length > 0
+          ? [...targetBudget.categoryIds]
+          : categories.map((c) => c.id)
+      );
     } else {
-      // Default to salary cycle (e.g. 25th to 24th) or current month
       const salaryCycle = getDefaultSalaryCycle(25);
       setDraftAmount("");
       setDraftStartDate(salaryCycle.startDate);
       setDraftEndDate(salaryCycle.endDate);
-      setDraftName(salaryCycle.name);
+      setDraftName(budgets.length === 0 ? "Monthly Budget" : `Budget Group ${budgets.length + 1}`);
+      setDraftCategoryIds(categories.map((c) => c.id));
     }
     setFormError("");
     setEditing(true);
@@ -83,7 +89,7 @@ export default function BudgetCard() {
       const cycle = getDefaultSalaryCycle(25, today);
       setDraftStartDate(cycle.startDate);
       setDraftEndDate(cycle.endDate);
-      setDraftName(cycle.name);
+      if (!draftName || draftName === "Monthly Budget") setDraftName(cycle.name);
     } else if (type === "month") {
       const y = today.getFullYear();
       const m = today.getMonth();
@@ -92,9 +98,9 @@ export default function BudgetCard() {
       const end = `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
       setDraftStartDate(start);
       setDraftEndDate(end);
-      setDraftName(
-        today.toLocaleDateString(undefined, { month: "long", year: "numeric" })
-      );
+      if (!draftName || draftName === "Monthly Budget") {
+        setDraftName(today.toLocaleDateString(undefined, { month: "long", year: "numeric" }));
+      }
     } else if (type === "next30") {
       const start = toLocalDateString(today);
       const endObj = new Date(today);
@@ -102,8 +108,22 @@ export default function BudgetCard() {
       const end = toLocalDateString(endObj);
       setDraftStartDate(start);
       setDraftEndDate(end);
-      setDraftName(formatDateRange(start, end));
+      if (!draftName || draftName === "Monthly Budget") setDraftName(formatDateRange(start, end));
     }
+  };
+
+  const toggleCategoryInDraft = (catId: string) => {
+    setDraftCategoryIds((prev) =>
+      prev.includes(catId) ? prev.filter((id) => id !== catId) : [...prev, catId]
+    );
+  };
+
+  const selectAllCategories = () => {
+    setDraftCategoryIds(categories.map((c) => c.id));
+  };
+
+  const clearAllCategories = () => {
+    setDraftCategoryIds([]);
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -122,12 +142,18 @@ export default function BudgetCard() {
       return;
     }
 
+    const payloadCategoryIds =
+      draftCategoryIds.length === categories.length || draftCategoryIds.length === 0
+        ? undefined
+        : draftCategoryIds;
+
     if (activeBudget && editing) {
       updateBudgetPeriod(activeBudget.id, {
         name: draftName.trim() || formatDateRange(draftStartDate, draftEndDate),
         amount: amt,
         startDate: draftStartDate,
         endDate: draftEndDate,
+        categoryIds: payloadCategoryIds,
       });
       setSelectedBudgetId(activeBudget.id);
     } else {
@@ -136,6 +162,7 @@ export default function BudgetCard() {
         amount: amt,
         startDate: draftStartDate,
         endDate: draftEndDate,
+        categoryIds: payloadCategoryIds,
       });
       setSelectedBudgetId(created.id);
     }
@@ -145,7 +172,7 @@ export default function BudgetCard() {
 
   const handleDeleteCurrent = () => {
     if (!activeBudget) return;
-    if (window.confirm(`Delete budget period "${activeBudget.name}"?`)) {
+    if (window.confirm(`Delete budget group "${activeBudget.name}"?`)) {
       deleteBudgetPeriod(activeBudget.id);
       setSelectedBudgetId(null);
       setEditing(false);
@@ -157,7 +184,7 @@ export default function BudgetCard() {
       <div className="mb-4 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">
-            {activeBudget ? "Edit Budget Period" : "Set New Budget Period"}
+            {activeBudget ? "Edit Budget Group" : "Set New Budget Group"}
           </h3>
           <button
             type="button"
@@ -168,11 +195,11 @@ export default function BudgetCard() {
           </button>
         </div>
 
-        <form onSubmit={handleSave} className="space-y-3">
+        <form onSubmit={handleSave} className="space-y-3.5">
           {/* Quick preset buttons */}
           <div>
             <span className="mb-1 block text-[11px] font-medium text-neutral-500">
-              Quick presets
+              Quick date presets
             </span>
             <div className="flex flex-wrap gap-1.5">
               <button
@@ -197,6 +224,19 @@ export default function BudgetCard() {
                 ⏳ 30 Days
               </button>
             </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-neutral-500">
+              Budget Group Name
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Living Essentials, Fun & Leisure, Groceries"
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-2">
@@ -232,7 +272,7 @@ export default function BudgetCard() {
                 min="0"
                 step="0.01"
                 required
-                placeholder="20000.00"
+                placeholder="15000.00"
                 value={draftAmount}
                 onChange={(e) => setDraftAmount(e.target.value)}
                 className="w-full bg-transparent text-base font-semibold outline-none"
@@ -240,17 +280,58 @@ export default function BudgetCard() {
             </div>
           </div>
 
+          {/* Categories covered selection */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-neutral-500">
-              Period Name / Label <span className="text-neutral-400 font-normal">(optional)</span>
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Salary Cycle: Aug 25 - Sep 24"
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-950"
-            />
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="text-xs font-medium text-neutral-500">Covered Categories</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllCategories}
+                  className="text-[11px] font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                >
+                  Select All
+                </button>
+                <span className="text-neutral-300 dark:text-neutral-700">·</span>
+                <button
+                  type="button"
+                  onClick={clearAllCategories}
+                  className="text-[11px] font-medium text-neutral-500 hover:underline dark:text-neutral-400"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 rounded-lg border border-neutral-200 bg-neutral-50/70 p-2 dark:border-neutral-800 dark:bg-neutral-950">
+              {categories.map((c) => {
+                const isSelected = draftCategoryIds.includes(c.id);
+                return (
+                  <button
+                    type="button"
+                    key={c.id}
+                    onClick={() => toggleCategoryInDraft(c.id)}
+                    className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-all ${
+                      isSelected
+                        ? "border-transparent bg-white text-neutral-900 shadow-sm ring-1 ring-black/10 dark:bg-neutral-800 dark:text-neutral-100"
+                        : "border-transparent text-neutral-400 opacity-60 hover:opacity-100"
+                    }`}
+                  >
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: c.color }}
+                    />
+                    <span>{c.name}</span>
+                    {isSelected && <span className="text-[10px] text-indigo-600 dark:text-indigo-400">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] text-neutral-400">
+              {draftCategoryIds.length === 0 || draftCategoryIds.length === categories.length
+                ? "Covers all categories"
+                : `Covers ${draftCategoryIds.length} selected categor${draftCategoryIds.length > 1 ? "ies" : "y"}`}
+            </p>
           </div>
 
           {formError && <p className="text-xs text-red-500">{formError}</p>}
@@ -269,7 +350,7 @@ export default function BudgetCard() {
               type="submit"
               className="flex-1 rounded-lg bg-indigo-600 py-2 text-xs font-semibold text-white shadow hover:bg-indigo-700 active:scale-[0.99]"
             >
-              Save Budget Period
+              Save Budget Group
             </button>
           </div>
         </form>
@@ -283,10 +364,10 @@ export default function BudgetCard() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-              Set Your Budget Period
+              Set Your Budget Group
             </h3>
             <p className="text-xs text-neutral-400">
-              Track spending from your salary start date to end date
+              Create budget groups and choose which categories they cover
             </p>
           </div>
           <button
@@ -302,24 +383,39 @@ export default function BudgetCard() {
 
   return (
     <div className="mb-4 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+      {/* Multi-group pill tabs */}
+      {budgets.length > 1 && (
+        <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+          {budgets.map((b) => {
+            const isActive = b.id === activeBudget.id;
+            return (
+              <button
+                key={b.id}
+                onClick={() => setSelectedBudgetId(b.id)}
+                className={`whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                  isActive
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300"
+                }`}
+              >
+                {b.name}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => openEditor(undefined)}
+            className="whitespace-nowrap rounded-lg border border-dashed border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-500 hover:border-neutral-400 dark:border-neutral-700"
+          >
+            + Add Group
+          </button>
+        </div>
+      )}
+
       <div className="mb-1.5 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-            Budget
+            Budget Group
           </h2>
-          {budgets.length > 1 && (
-            <select
-              value={activeBudget.id}
-              onChange={(e) => setSelectedBudgetId(e.target.value)}
-              className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-            >
-              {budgets.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name || formatDateRange(b.startDate, b.endDate)}
-                </option>
-              ))}
-            </select>
-          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -329,13 +425,15 @@ export default function BudgetCard() {
           >
             Edit
           </button>
-          <button
-            onClick={() => openEditor(undefined)}
-            className="rounded-md border border-neutral-200 px-2 py-0.5 text-[11px] font-medium text-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
-            title="Add another budget period"
-          >
-            + New Period
-          </button>
+          {budgets.length === 1 && (
+            <button
+              onClick={() => openEditor(undefined)}
+              className="rounded-md border border-neutral-200 px-2 py-0.5 text-[11px] font-medium text-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
+              title="Add another budget group"
+            >
+              + New Group
+            </button>
+          )}
         </div>
       </div>
 
@@ -367,6 +465,24 @@ export default function BudgetCard() {
         </div>
       </div>
 
+      {/* Covered Category Badges */}
+      <div className="mb-3 flex flex-wrap items-center gap-1">
+        <span className="text-[11px] text-neutral-400">Covers:</span>
+        {coveredCats.length === 0 ? (
+          <span className="text-[11px] text-neutral-400">All categories</span>
+        ) : (
+          coveredCats.map((c) => (
+            <span
+              key={c.id}
+              className="flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: c.color }} />
+              {c.name}
+            </span>
+          ))
+        )}
+      </div>
+
       <div className="mb-2 flex items-baseline justify-between">
         <span className={`text-2xl font-bold tracking-tight ${over ? "text-red-600" : ""}`}>
           ฿{formatMoney(remaining)}
@@ -387,12 +503,6 @@ export default function BudgetCard() {
           style={{ width: `${pct}%` }}
         />
       </div>
-
-      {!hasBudgetedCategories && (
-        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-          ⚠️ No categories are set to count toward budget. Configure this in Categories.
-        </p>
-      )}
     </div>
   );
 }

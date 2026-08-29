@@ -36,6 +36,7 @@ type NewBudgetInput = {
   amount: number;
   startDate: string;
   endDate: string;
+  categoryIds?: string[];
 };
 
 type DataContextValue = {
@@ -172,6 +173,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       amount: input.amount,
       startDate: input.startDate,
       endDate: input.endDate,
+      categoryIds: input.categoryIds,
     };
     setBudgets((prev) => {
       // Keep sorted by startDate descending
@@ -192,6 +194,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               amount: input.amount,
               startDate: input.startDate,
               endDate: input.endDate,
+              categoryIds: input.categoryIds,
             }
           : b
       );

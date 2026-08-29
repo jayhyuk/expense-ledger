@@ -18,9 +18,9 @@ import { useData } from "@/lib/DataContext";
 import Header from "@/components/Header";
 import { BudgetPeriod, Expense } from "@/lib/types";
 import {
-  budgetedSpendForPeriod,
   formatDateRange,
   formatMoney,
+  getCoveredCategories,
   isDateInRange,
   monthKey,
   shiftMonth,
@@ -35,14 +35,14 @@ function monthLabel(key: string) {
 const TREND_PERIODS = 6;
 
 export default function ReportPage() {
-  const { ready, categories, expenses, budgets, getActiveBudget, updateCategory } = useData();
+  const { ready, categories, expenses, budgets, getActiveBudget } = useData();
 
-  // Mode: "period" (Custom Budget Period) or "month" (Calendar Month)
+  // Mode: "period" (Custom Budget Group) or "month" (Calendar Month)
   const [viewMode, setViewMode] = useState<"period" | "month">(() =>
     budgets.length > 0 ? "period" : "month"
   );
 
-  // Selected budget period ID (if in "period" mode)
+  // Selected budget group ID (if in "period" mode)
   const [selectedBudgetId, setSelectedBudgetId] = useState<string>(() => {
     const active = getActiveBudget();
     return active?.id || budgets[0]?.id || "";
@@ -54,18 +54,28 @@ export default function ReportPage() {
   // Expandable categories set
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
-  // Quick edit color state
-  const [colorEditingCatId, setColorEditingCatId] = useState<string | null>(null);
-
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
-  // Current active budget period object if in period mode
+  // Current active budget group object if in period mode
   const currentBudgetPeriod: BudgetPeriod | undefined = useMemo(() => {
     if (viewMode === "period" && budgets.length > 0) {
       return budgets.find((b) => b.id === selectedBudgetId) || budgets[0];
     }
     return undefined;
   }, [viewMode, budgets, selectedBudgetId]);
+
+  // Covered categories for the selected budget group
+  const coveredCategories = useMemo(() => {
+    if (viewMode === "period" && currentBudgetPeriod) {
+      return getCoveredCategories(currentBudgetPeriod, categories);
+    }
+    return categories;
+  }, [viewMode, currentBudgetPeriod, categories]);
+
+  const coveredCategoryIds = useMemo(
+    () => new Set(coveredCategories.map((c) => c.id)),
+    [coveredCategories]
+  );
 
   // Determine current active date range
   const { startDate, endDate, periodLabel, budgetAmount } = useMemo(() => {
@@ -95,10 +105,14 @@ export default function ReportPage() {
     };
   }, [viewMode, currentBudgetPeriod, monthCursor, budgets]);
 
-  // Expenses strictly in the current date range
+  // Expenses strictly in the current date range and covered categories
   const periodExpenses = useMemo(() => {
-    return (expenses as Expense[]).filter((e) => isDateInRange(e.date, startDate, endDate));
-  }, [expenses, startDate, endDate]);
+    return (expenses as Expense[]).filter(
+      (e) =>
+        isDateInRange(e.date, startDate, endDate) &&
+        (viewMode === "month" || coveredCategoryIds.has(e.categoryId))
+    );
+  }, [expenses, startDate, endDate, viewMode, coveredCategoryIds]);
 
   // Expenses grouped by Category ID
   const expensesByCategory = useMemo(() => {
@@ -137,8 +151,11 @@ export default function ReportPage() {
   const monthTotal = useMemo(() => pieData.reduce((sum, d) => sum + d.value, 0), [pieData]);
 
   const budgetSpent = useMemo(
-    () => pieData.filter((d) => d.countsTowardBudget).reduce((sum, d) => sum + d.value, 0),
-    [pieData]
+    () =>
+      viewMode === "period"
+        ? monthTotal
+        : pieData.filter((d) => d.countsTowardBudget).reduce((sum, d) => sum + d.value, 0),
+    [viewMode, monthTotal, pieData]
   );
   const budgetRemaining = budgetAmount - budgetSpent;
   const budgetOver = budgetAmount > 0 && budgetSpent > budgetAmount;
@@ -150,13 +167,11 @@ export default function ReportPage() {
     let pStart = "";
     let pEnd = "";
     if (viewMode === "period" && currentBudgetPeriod) {
-      // Look for the next older budget period in the sorted list
       const idx = budgets.findIndex((b) => b.id === currentBudgetPeriod.id);
       if (idx >= 0 && idx < budgets.length - 1) {
         pStart = budgets[idx + 1].startDate;
         pEnd = budgets[idx + 1].endDate;
       } else {
-        // Approximate 30 days prior
         const [sy, sm, sd] = currentBudgetPeriod.startDate.split("-").map(Number);
         const [ey, em, ed] = currentBudgetPeriod.endDate.split("-").map(Number);
         const prevStartObj = new Date(sy, sm - 2, sd);
@@ -172,7 +187,11 @@ export default function ReportPage() {
       pEnd = `${prevKey}-${String(lastDay).padStart(2, "0")}`;
     }
 
-    const prevExp = (expenses as Expense[]).filter((e) => isDateInRange(e.date, pStart, pEnd));
+    const prevExp = (expenses as Expense[]).filter(
+      (e) =>
+        isDateInRange(e.date, pStart, pEnd) &&
+        (viewMode === "month" || coveredCategoryIds.has(e.categoryId))
+    );
     const prevCatMap = new Map<string, number>();
     let total = 0;
     for (const e of prevExp) {
@@ -180,15 +199,16 @@ export default function ReportPage() {
       prevCatMap.set(e.categoryId, (prevCatMap.get(e.categoryId) ?? 0) + e.amount);
     }
     return { prevTotal: total, prevCategoryTotals: prevCatMap };
-  }, [viewMode, currentBudgetPeriod, budgets, monthCursor, expenses]);
+  }, [viewMode, currentBudgetPeriod, budgets, monthCursor, expenses, coveredCategoryIds]);
 
   // Trend data across periods/months
   const trendData = useMemo(() => {
     if (viewMode === "period" && budgets.length > 0) {
       const slice = [...budgets].slice(0, TREND_PERIODS).reverse();
       return slice.map((b) => {
-        const bExp = (expenses as Expense[]).filter((e) =>
-          isDateInRange(e.date, b.startDate, b.endDate)
+        const bCoveredIds = new Set(getCoveredCategories(b, categories).map((c) => c.id));
+        const bExp = (expenses as Expense[]).filter(
+          (e) => isDateInRange(e.date, b.startDate, b.endDate) && bCoveredIds.has(e.categoryId)
         );
         const catMap = new Map<string, number>();
         for (const e of bExp) catMap.set(e.categoryId, (catMap.get(e.categoryId) ?? 0) + e.amount);
@@ -196,7 +216,9 @@ export default function ReportPage() {
           name: b.name.length > 12 ? b.name.slice(0, 12) + "…" : b.name,
         };
         for (const c of categories) {
-          row[c.name] = Math.round((catMap.get(c.id) ?? 0) * 100) / 100;
+          if (bCoveredIds.has(c.id)) {
+            row[c.name] = Math.round((catMap.get(c.id) ?? 0) * 100) / 100;
+          }
         }
         return row;
       });
@@ -267,8 +289,7 @@ export default function ReportPage() {
   const handleStepPeriod = (direction: -1 | 1) => {
     if (viewMode === "period" && budgets.length > 0) {
       const curIdx = budgets.findIndex((b) => b.id === selectedBudgetId);
-      // budgets is sorted descending (index 0 is newest)
-      const nextIdx = curIdx - direction; // direction 1 = newer (smaller idx), -1 = older (larger idx)
+      const nextIdx = curIdx - direction;
       if (nextIdx >= 0 && nextIdx < budgets.length) {
         setSelectedBudgetId(budgets[nextIdx].id);
       }
@@ -297,7 +318,7 @@ export default function ReportPage() {
     <>
       <Header title="Report" />
       <main className="flex-1 px-4 pt-4 pb-10">
-        {/* Mode Selector Tab (if budget periods exist) */}
+        {/* Mode Selector Tab */}
         {budgets.length > 0 && (
           <div className="mb-3 flex rounded-xl bg-neutral-100 p-1 dark:bg-neutral-800">
             <button
@@ -311,7 +332,7 @@ export default function ReportPage() {
                   : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
               }`}
             >
-              📅 Salary / Budget Periods
+              📅 Budget Groups
             </button>
             <button
               onClick={() => setViewMode("month")}
@@ -377,6 +398,22 @@ export default function ReportPage() {
               ›
             </button>
           </div>
+
+          {/* Group covered category chips in report header */}
+          {viewMode === "period" && coveredCategories.length > 0 && (
+            <div className="mt-2.5 flex flex-wrap items-center justify-center gap-1 border-t border-neutral-100 pt-2 dark:border-neutral-800">
+              <span className="text-[10px] text-neutral-400">Includes:</span>
+              {coveredCategories.map((c) => (
+                <span
+                  key={c.id}
+                  className="flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: c.color }} />
+                  {c.name}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Budget Summary Card */}
@@ -384,7 +421,7 @@ export default function ReportPage() {
           <div className="mb-4 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
             <div className="mb-1.5 flex items-baseline justify-between">
               <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-                Budget Tracking
+                {viewMode === "period" ? "Group Budget" : "Monthly Budget"}
               </h2>
               <span className={`text-lg font-bold ${budgetOver ? "text-red-600" : ""}`}>
                 ฿{formatMoney(budgetRemaining)}
@@ -402,7 +439,8 @@ export default function ReportPage() {
               />
             </div>
             <p className="mt-1.5 text-xs text-neutral-400">
-              ฿{formatMoney(budgetSpent)} spent of ฿{formatMoney(budgetAmount)} (budgeted categories only)
+              ฿{formatMoney(budgetSpent)} spent of ฿{formatMoney(budgetAmount)} (
+              {viewMode === "period" ? "group categories" : "budgeted categories"})
             </p>
           </div>
         )}
@@ -423,7 +461,7 @@ export default function ReportPage() {
 
           {pieData.length === 0 ? (
             <p className="py-8 text-center text-sm text-neutral-400">
-              No expenses in this budget period.
+              No expenses recorded in this budget group / period.
             </p>
           ) : (
             <>
@@ -436,7 +474,11 @@ export default function ReportPage() {
                     innerRadius={50}
                     outerRadius={90}
                     paddingAngle={2}
-                    onClick={(entry) => toggleCategoryExpand(entry.categoryId)}
+                    onClick={(entry: unknown) => {
+                      if (entry && typeof entry === "object" && "categoryId" in entry) {
+                        toggleCategoryExpand(String((entry as { categoryId: string }).categoryId));
+                      }
+                    }}
                     className="cursor-pointer"
                   >
                     {pieData.map((entry) => (
@@ -571,7 +613,7 @@ export default function ReportPage() {
         {/* Category Trend Chart */}
         <div className="mb-4 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <h2 className="mb-2 text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-            Category Trend ({viewMode === "period" ? "Last Periods" : "Last Months"})
+            Category Trend ({viewMode === "period" ? "Last Budget Groups" : "Last Months"})
           </h2>
           {categories.length === 0 ? (
             <p className="py-4 text-center text-sm text-neutral-400">No categories to chart.</p>
