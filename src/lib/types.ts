@@ -14,14 +14,20 @@ export type Expense = {
   createdAt: string; // ISO datetime string, when the record was created
 };
 
-// Monthly budget amounts keyed by "YYYY-MM". A special "default" key holds
-// the fallback amount used for any month without an explicit override.
-export type Budgets = Record<string, number>;
+export type BudgetPeriod = {
+  id: string;
+  name: string; // e.g. "Aug 25 - Sep 24" or "September Salary"
+  amount: number;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+};
+
+export type Budgets = BudgetPeriod[];
 
 export type ExportPayload = {
-  version: 2;
+  version: 2 | 3;
   exportedAt: string;
   categories: Category[];
   expenses: Expense[];
-  budgets: Budgets;
+  budgets: BudgetPeriod[] | Record<string, number>;
 };

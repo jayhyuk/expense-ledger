@@ -23,6 +23,96 @@ export function formatCurrency(n: number) {
   return `฿${formatMoney(n)}`;
 }
 
+export function toLocalDateString(dateInput: string | Date = new Date()): string {
+  const d = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+export function isDateInRange(dateIso: string, startDateStr: string, endDateStr: string): boolean {
+  if (!dateIso || !startDateStr || !endDateStr) return false;
+  const dateStr = toLocalDateString(dateIso);
+  return dateStr >= startDateStr && dateStr <= endDateStr;
+}
+
+export function formatDateRange(startDateStr: string, endDateStr: string): string {
+  if (!startDateStr || !endDateStr) return "";
+  const [sy, sm, sd] = startDateStr.split("-").map(Number);
+  const [ey, em, ed] = endDateStr.split("-").map(Number);
+  const start = new Date(sy, sm - 1, sd);
+  const end = new Date(ey, em - 1, ed);
+
+  const startFmt = start.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: sy === ey ? undefined : "numeric",
+  });
+  const endFmt = end.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  return `${startFmt} – ${endFmt}`;
+}
+
+export function getDaysRemaining(endDateStr: string): number {
+  if (!endDateStr) return 0;
+  const todayStr = toLocalDateString(new Date());
+  const [ty, tm, td] = todayStr.split("-").map(Number);
+  const [ey, em, ed] = endDateStr.split("-").map(Number);
+  const todayDate = new Date(ty, tm - 1, td).getTime();
+  const endDate = new Date(ey, em - 1, ed).getTime();
+  const diffDays = Math.ceil((endDate - todayDate) / (1000 * 60 * 60 * 24));
+  return diffDays;
+}
+
+export function getDefaultSalaryCycle(payDay: number = 25, referenceDate: Date = new Date()): {
+  startDate: string;
+  endDate: string;
+  name: string;
+} {
+  const y = referenceDate.getFullYear();
+  const m = referenceDate.getMonth(); // 0-indexed
+  const d = referenceDate.getDate();
+
+  let startYear = y;
+  let startMonth = m;
+  if (d < payDay) {
+    // We are before payDay in the current month, so cycle started previous month
+    startMonth = m - 1;
+    if (startMonth < 0) {
+      startMonth = 11;
+      startYear = y - 1;
+    }
+  }
+
+  const startDateObj = new Date(startYear, startMonth, payDay);
+  // End date is day before payDay in the subsequent month
+  const nextMonthObj = new Date(startYear, startMonth + 1, payDay);
+  const endDateObj = new Date(nextMonthObj.getFullYear(), nextMonthObj.getMonth(), nextMonthObj.getDate() - 1);
+
+  const startDate = toLocalDateString(startDateObj);
+  const endDate = toLocalDateString(endDateObj);
+  const name = `${startDateObj.toLocaleDateString(undefined, { month: "short" })} ${payDay} – ${endDateObj.toLocaleDateString(undefined, { month: "short" })} ${endDateObj.getDate()}`;
+
+  return { startDate, endDate, name };
+}
+
+/** Total spend for a given budget period, restricted to categories that count toward budget. */
+export function budgetedSpendForPeriod(
+  expenses: Expense[],
+  categories: Category[],
+  startDateStr: string,
+  endDateStr: string
+): number {
+  const budgetedIds = new Set(
+    categories.filter((c) => c.countsTowardBudget).map((c) => c.id)
+  );
+  return expenses
+    .filter((e) => isDateInRange(e.date, startDateStr, endDateStr) && budgetedIds.has(e.categoryId))
+    .reduce((sum, e) => sum + e.amount, 0);
+}
+
 /** Total spend for a given month, restricted to categories that count toward budget. */
 export function budgetedSpendForMonth(
   expenses: Expense[],

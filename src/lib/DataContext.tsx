@@ -9,7 +9,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Budgets, Category, Expense, ExportPayload } from "./types";
+import { BudgetPeriod, Budgets, Category, Expense, ExportPayload } from "./types";
 import {
   applyImportPayload,
   buildExportPayload,
@@ -22,10 +22,7 @@ import {
   saveCategories,
   saveExpenses,
 } from "./storage";
-
-// Key used in the budgets map to store the fallback amount applied to any
-// month that doesn't have its own explicit budget set.
-export const DEFAULT_BUDGET_KEY = "default";
+import { isDateInRange, toLocalDateString } from "./dateUtils";
 
 type NewExpenseInput = {
   amount: number;
@@ -34,20 +31,34 @@ type NewExpenseInput = {
   date: string;
 };
 
+type NewBudgetInput = {
+  name?: string;
+  amount: number;
+  startDate: string;
+  endDate: string;
+};
+
 type DataContextValue = {
   ready: boolean;
   categories: Category[];
   expenses: Expense[];
-  budgets: Budgets;
+  budgets: BudgetPeriod[];
   addExpense: (input: NewExpenseInput) => void;
   updateExpense: (id: string, input: NewExpenseInput) => void;
   deleteExpense: (id: string) => void;
   addCategory: (name: string, color: string, countsTowardBudget: boolean) => void;
+  updateCategory: (
+    id: string,
+    updates: { name?: string; color?: string; countsTowardBudget?: boolean }
+  ) => void;
   removeCategory: (id: string) => void;
   updateCategoryBudgetFlag: (id: string, countsTowardBudget: boolean) => void;
-  setMonthBudget: (month: string, amount: number) => void;
-  setDefaultBudget: (amount: number) => void;
+  addBudgetPeriod: (input: NewBudgetInput) => BudgetPeriod;
+  updateBudgetPeriod: (id: string, input: NewBudgetInput) => void;
+  deleteBudgetPeriod: (id: string) => void;
+  getActiveBudget: (dateIsoOrStr?: string) => BudgetPeriod | undefined;
   getBudgetForMonth: (month: string) => number;
+  setMonthBudget: (month: string, amount: number) => void;
   exportJson: () => string;
   importJson: (json: string) => void;
 };
@@ -58,7 +69,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [budgets, setBudgets] = useState<Budgets>({});
+  const [budgets, setBudgets] = useState<BudgetPeriod[]>([]);
 
   useEffect(() => {
     setCategories(loadCategories());
@@ -95,7 +106,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setExpenses((prev) =>
       prev.map((e) =>
         e.id === id
-          ? { ...e, amount: input.amount, shop: input.shop, categoryId: input.categoryId, date: input.date }
+          ? {
+              ...e,
+              amount: input.amount,
+              shop: input.shop,
+              categoryId: input.categoryId,
+              date: input.date,
+            }
           : e
       )
     );
@@ -114,6 +131,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
     ]);
   }, []);
 
+  const updateCategory = useCallback(
+    (
+      id: string,
+      updates: { name?: string; color?: string; countsTowardBudget?: boolean }
+    ) => {
+      setCategories((prev) =>
+        prev.map((c) => {
+          if (c.id !== id) return c;
+          return {
+            ...c,
+            ...(updates.name !== undefined && updates.name.trim()
+              ? { name: updates.name.trim() }
+              : {}),
+            ...(updates.color !== undefined ? { color: updates.color } : {}),
+            ...(updates.countsTowardBudget !== undefined
+              ? { countsTowardBudget: updates.countsTowardBudget }
+              : {}),
+          };
+        })
+      );
+    },
+    []
+  );
+
   const removeCategory = useCallback((id: string) => {
     setCategories((prev) => prev.filter((c) => c.id !== id));
   }, []);
@@ -124,17 +165,95 @@ export function DataProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
-  const setMonthBudget = useCallback((month: string, amount: number) => {
-    setBudgets((prev) => ({ ...prev, [month]: amount }));
+  const addBudgetPeriod = useCallback((input: NewBudgetInput): BudgetPeriod => {
+    const newPeriod: BudgetPeriod = {
+      id: genId(),
+      name: input.name?.trim() || `${input.startDate} – ${input.endDate}`,
+      amount: input.amount,
+      startDate: input.startDate,
+      endDate: input.endDate,
+    };
+    setBudgets((prev) => {
+      // Keep sorted by startDate descending
+      const next = [newPeriod, ...prev];
+      next.sort((a, b) => b.startDate.localeCompare(a.startDate));
+      return next;
+    });
+    return newPeriod;
   }, []);
 
-  const setDefaultBudget = useCallback((amount: number) => {
-    setBudgets((prev) => ({ ...prev, [DEFAULT_BUDGET_KEY]: amount }));
+  const updateBudgetPeriod = useCallback((id: string, input: NewBudgetInput) => {
+    setBudgets((prev) => {
+      const next = prev.map((b) =>
+        b.id === id
+          ? {
+              ...b,
+              name: input.name?.trim() || `${input.startDate} – ${input.endDate}`,
+              amount: input.amount,
+              startDate: input.startDate,
+              endDate: input.endDate,
+            }
+          : b
+      );
+      next.sort((a, b) => b.startDate.localeCompare(a.startDate));
+      return next;
+    });
   }, []);
+
+  const deleteBudgetPeriod = useCallback((id: string) => {
+    setBudgets((prev) => prev.filter((b) => b.id !== id));
+  }, []);
+
+  const getActiveBudget = useCallback(
+    (dateIsoOrStr?: string): BudgetPeriod | undefined => {
+      if (budgets.length === 0) return undefined;
+      const targetDate = dateIsoOrStr || toLocalDateString(new Date());
+      // First try to find one that encloses targetDate
+      const enclosing = budgets.find((b) => isDateInRange(targetDate, b.startDate, b.endDate));
+      if (enclosing) return enclosing;
+      // Otherwise return the most recent budget
+      return budgets[0];
+    },
+    [budgets]
+  );
 
   const getBudgetForMonth = useCallback(
-    (month: string) => budgets[month] ?? budgets[DEFAULT_BUDGET_KEY] ?? 0,
-    [budgets]
+    (month: string) => {
+      const matching = budgets.find((b) => b.startDate.startsWith(month));
+      if (matching) return matching.amount;
+      const active = getActiveBudget();
+      return active ? active.amount : 0;
+    },
+    [budgets, getActiveBudget]
+  );
+
+  const setMonthBudget = useCallback(
+    (month: string, amount: number) => {
+      const existing = budgets.find((b) => b.startDate.startsWith(month));
+      const [y, m] = month.split("-").map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      const startDate = `${month}-01`;
+      const endDate = `${month}-${String(lastDay).padStart(2, "0")}`;
+      if (existing) {
+        updateBudgetPeriod(existing.id, {
+          name: existing.name,
+          amount,
+          startDate: existing.startDate,
+          endDate: existing.endDate,
+        });
+      } else {
+        addBudgetPeriod({
+          name: new Date(y, m - 1, 1).toLocaleDateString(undefined, {
+            month: "long",
+            year: "numeric",
+          }),
+          amount,
+          startDate,
+          endDate,
+        });
+      }
+    },
+    [budgets, updateBudgetPeriod, addBudgetPeriod]
   );
 
   const exportJson = useCallback(() => {
@@ -159,11 +278,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       updateExpense,
       deleteExpense,
       addCategory,
+      updateCategory,
       removeCategory,
       updateCategoryBudgetFlag,
-      setMonthBudget,
-      setDefaultBudget,
+      addBudgetPeriod,
+      updateBudgetPeriod,
+      deleteBudgetPeriod,
+      getActiveBudget,
       getBudgetForMonth,
+      setMonthBudget,
       exportJson,
       importJson,
     }),
@@ -176,11 +299,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       updateExpense,
       deleteExpense,
       addCategory,
+      updateCategory,
       removeCategory,
       updateCategoryBudgetFlag,
-      setMonthBudget,
-      setDefaultBudget,
+      addBudgetPeriod,
+      updateBudgetPeriod,
+      deleteBudgetPeriod,
+      getActiveBudget,
       getBudgetForMonth,
+      setMonthBudget,
       exportJson,
       importJson,
     ]

@@ -59,26 +59,60 @@ export function saveExpenses(expenses: Expense[]) {
   window.localStorage.setItem(EXPENSES_KEY, JSON.stringify(expenses));
 }
 
-export function loadBudgets(): Budgets {
-  if (!isBrowser()) return {};
+export function loadBudgets(): BudgetPeriod[] {
+  if (!isBrowser()) return [];
   try {
     const raw = window.localStorage.getItem(BUDGETS_KEY);
-    if (!raw) return {};
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
+
+    // New format: Array of BudgetPeriod
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((b) => b && typeof b === "object" && b.startDate && b.endDate)
+        .map((b) => ({
+          id: b.id || genId(),
+          name: b.name || `${b.startDate} – ${b.endDate}`,
+          amount: typeof b.amount === "number" ? b.amount : parseFloat(b.amount) || 0,
+          startDate: b.startDate,
+          endDate: b.endDate,
+        }));
+    }
+
+    // Legacy format: Record<string, number>
+    if (parsed && typeof parsed === "object") {
+      const periods: BudgetPeriod[] = [];
+      for (const [key, val] of Object.entries(parsed)) {
+        if (/^\d{4}-\d{2}$/.test(key) && typeof val === "number" && val > 0) {
+          const [y, m] = key.split("-").map(Number);
+          const lastDay = new Date(y, m, 0).getDate();
+          const startDate = `${key}-01`;
+          const endDate = `${key}-${String(lastDay).padStart(2, "0")}`;
+          periods.push({
+            id: genId(),
+            name: new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+            amount: val,
+            startDate,
+            endDate,
+          });
+        }
+      }
+      return periods;
+    }
+    return [];
   } catch {
-    return {};
+    return [];
   }
 }
 
-export function saveBudgets(budgets: Budgets) {
+export function saveBudgets(budgets: BudgetPeriod[]) {
   if (!isBrowser()) return;
   window.localStorage.setItem(BUDGETS_KEY, JSON.stringify(budgets));
 }
 
 export function buildExportPayload(): ExportPayload {
   return {
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     categories: loadCategories(),
     expenses: loadExpenses(),
@@ -94,7 +128,32 @@ export function applyImportPayload(payload: ExportPayload) {
     ...c,
     countsTowardBudget: c.countsTowardBudget ?? true,
   }));
-  const budgets = payload.budgets && typeof payload.budgets === "object" ? payload.budgets : {};
+
+  let budgets: BudgetPeriod[] = [];
+  if (Array.isArray(payload.budgets)) {
+    budgets = payload.budgets.map((b) => ({
+      id: b.id || genId(),
+      name: b.name || `${b.startDate} – ${b.endDate}`,
+      amount: typeof b.amount === "number" ? b.amount : parseFloat(String(b.amount)) || 0,
+      startDate: b.startDate,
+      endDate: b.endDate,
+    }));
+  } else if (payload.budgets && typeof payload.budgets === "object") {
+    for (const [key, val] of Object.entries(payload.budgets)) {
+      if (/^\d{4}-\d{2}$/.test(key) && typeof val === "number" && val > 0) {
+        const [y, m] = key.split("-").map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        budgets.push({
+          id: genId(),
+          name: new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+          amount: val,
+          startDate: `${key}-01`,
+          endDate: `${key}-${String(lastDay).padStart(2, "0")}`,
+        });
+      }
+    }
+  }
+
   saveCategories(categories);
   saveExpenses(payload.expenses);
   saveBudgets(budgets);
